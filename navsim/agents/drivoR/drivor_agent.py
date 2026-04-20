@@ -145,7 +145,19 @@ class DrivoRAgent(AbstractAgent):
             else:
                 state_dict: Dict[str, Any] = torch.load(self._checkpoint_path, map_location=torch.device("cpu"))[
                     "state_dict"]
-            self.load_state_dict({k.replace("agent._drivor_model", "_drivor_model"): v for k, v in state_dict.items()})
+            mapped = {k.replace("agent._drivor_model", "_drivor_model"): v for k, v in state_dict.items()}
+            strict = self._config.get("load_checkpoint_strict", None)
+            if strict is None:
+                strict = not bool(self._config.get("use_bev_feature", False))
+            missing, unexpected = self.load_state_dict(mapped, strict=strict)
+            if not strict and (missing or unexpected):
+                import logging
+
+                logging.getLogger(__name__).info(
+                    "Partial checkpoint load: missing_keys=%s unexpected_keys=%s",
+                    missing,
+                    unexpected,
+                )
 
     def get_sensor_config(self) :
         """Inherited, see superclass."""
@@ -237,12 +249,27 @@ class DrivoRAgent(AbstractAgent):
     def get_optimizers(self):
 
         global_batchsize = self.batch_size * self.num_gpus
+        freeze_bev_only = bool(self._config.get("freeze_pretrained_except_bev", False))
+        if freeze_bev_only:
+            params = [
+                p
+                for n, p in self._drivor_model.named_parameters()
+                if n.startswith("bev_encoder.") or n.startswith("bev_proj.")
+            ]
+            if not params:
+                raise RuntimeError(
+                    "freeze_pretrained_except_bev=True but no bev_encoder/bev_proj parameters found; "
+                    "set use_bev_feature=True."
+                )
+        else:
+            params = list(self._drivor_model.parameters())
+
         if self._lr_args["name"] == "Adam":
             lr = self._lr_args["base_lr"] * math.sqrt(global_batchsize / self._lr_args["base_batch_size"])
-            optimizer = torch.optim.Adam(self._drivor_model.parameters(), lr=lr)
+            optimizer = torch.optim.Adam(params, lr=lr)
         elif self._lr_args["name"] == "AdamW":
             lr = self._lr_args["base_lr"] * math.sqrt(global_batchsize / self._lr_args["base_batch_size"])
-            optimizer = torch.optim.AdamW(self._drivor_model.parameters(), lr=lr)
+            optimizer = torch.optim.AdamW(params, lr=lr)
         else:
             raise NotImplementedError
 

@@ -1,6 +1,8 @@
 from enum import IntEnum
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import cv2
+import logging
 import numpy as np
 import numpy.typing as npt
 
@@ -27,6 +29,9 @@ from navsim.planning.training.abstract_feature_target_builder import (
 from PIL import Image
 from scipy.interpolate import CubicSpline
 
+logger = logging.getLogger(__name__)
+
+
 class DrivoRFeatureBuilder(AbstractFeatureBuilder):
     def __init__(self, config: Dict):
         self._config = config
@@ -35,7 +40,12 @@ class DrivoRFeatureBuilder(AbstractFeatureBuilder):
         """Inherited, see superclass."""
         return "drivor_feature"
 
-    def compute_features(self, agent_input: AgentInput) -> Dict[str, torch.Tensor]:
+    def compute_features(
+        self,
+        agent_input: AgentInput,
+        scene_token: Optional[str] = None,
+        log_name: Optional[str] = None,
+    ) -> Dict[str, torch.Tensor]:
         """Inherited, see superclass."""
 
         features = {}
@@ -62,7 +72,56 @@ class DrivoRFeatureBuilder(AbstractFeatureBuilder):
 
         features["ego_status"] =torch.stack(ego_feature_list)
 
+        if self._config.get("use_bev_feature", False) and scene_token is not None and log_name is not None:
+            self._attach_bev_feature(features, scene_token, log_name)
+
         return features
+
+    def maybe_load_bev_into_features(
+        self, features: Dict[str, torch.Tensor], scene_token: str, log_name: str
+    ) -> None:
+        """
+        Load or zero-fill BEV tensor when features come from disk cache (no BEV in old caches).
+        Mutates ``features`` in place.
+        """
+        if not self._config.get("use_bev_feature", False):
+            return
+        if "bev_feature" in features and features["bev_feature"] is not None:
+            return
+        self._attach_bev_feature(features, scene_token, log_name)
+
+    def _bev_suffix(self) -> str:
+        t = self._config.get("bev_feature_type", "vtransform")
+        if t == "decoder_neck":
+            return "decoder_neck"
+        return "vtransform"
+
+    def _bev_file_path(self, scene_token: str, log_name: str) -> Path:
+        root = Path(self._config.get("bev_features_root", ""))
+        split = self._config.get("bev_data_split", "trainval")
+        return root / split / log_name / f"{scene_token}_{self._bev_suffix()}.pt"
+
+    def _empty_bev_tensor(self) -> torch.Tensor:
+        c = int(self._config.get("bev_channels", 80))
+        h, w = self._config.get("bev_spatial_hw", [128, 128])
+        return torch.zeros((c, int(h), int(w)), dtype=torch.float32)
+
+    def _attach_bev_feature(self, features: Dict[str, torch.Tensor], scene_token: str, log_name: str) -> None:
+        path = self._bev_file_path(scene_token, log_name)
+        if path.is_file():
+            try:
+                t = torch.load(path, map_location="cpu")
+                if not isinstance(t, torch.Tensor):
+                    logger.warning("BEV file %s is not a tensor; using zeros.", path)
+                    features["bev_feature"] = self._empty_bev_tensor()
+                else:
+                    features["bev_feature"] = t.float()
+            except Exception as e:
+                logger.warning("Failed to load BEV %s: %s; using zeros.", path, e)
+                features["bev_feature"] = self._empty_bev_tensor()
+        else:
+            logger.debug("Missing BEV file %s; using zeros.", path)
+            features["bev_feature"] = self._empty_bev_tensor()
 
     def _get_camera_feature(self, agent_input: AgentInput) -> torch.Tensor:
         """

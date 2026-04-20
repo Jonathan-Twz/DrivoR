@@ -1,8 +1,9 @@
 import numpy as np
+from typing import Optional
 
 from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
 from navsim.agents.abstract_agent import AbstractAgent
-from navsim.common.dataclasses import AgentInput, Trajectory, SensorConfig
+from navsim.common.dataclasses import AgentInput, Scene, Trajectory, SensorConfig
 
 
 class ConstantVelocityAgent(AbstractAgent):
@@ -29,7 +30,7 @@ class ConstantVelocityAgent(AbstractAgent):
         """Inherited, see superclass."""
         return SensorConfig.build_no_sensors()
 
-    def compute_trajectory(self, agent_input: AgentInput) -> Trajectory:
+    def compute_trajectory(self, agent_input: AgentInput, scene: Optional[Scene] = None) -> Trajectory:
         """Inherited, see superclass."""
 
         ego_velocity_2d = agent_input.ego_statuses[-1].ego_velocity

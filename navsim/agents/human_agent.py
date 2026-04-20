@@ -1,3 +1,5 @@
+from typing import Optional
+
 from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
 
 from navsim.agents.abstract_agent import AbstractAgent
@@ -32,10 +34,11 @@ class HumanAgent(AbstractAgent):
         """Inherited, see superclass."""
         return SensorConfig.build_no_sensors()
 
-    def compute_trajectory(self, agent_input: AgentInput, scene: Scene) -> Trajectory:
+    def compute_trajectory(self, agent_input: AgentInput, scene: Optional[Scene] = None) -> Trajectory:
         """
         Computes the ego vehicle trajectory.
         :param current_input: Dataclass with agent inputs.
         :return: Trajectory representing the predicted ego's position in future
         """
+        assert scene is not None, "HumanAgent requires a Scene."
         return scene.get_future_trajectory(self._trajectory_sampling.num_poses)

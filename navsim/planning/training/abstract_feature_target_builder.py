@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Dict
+from typing import Dict, Optional
 
 from torch import Tensor
 
@@ -20,7 +20,12 @@ class AbstractFeatureBuilder:
         pass
 
     @abstractmethod
-    def compute_features(self, agent_input: AgentInput) -> Dict[str, Tensor]:
+    def compute_features(
+        self,
+        agent_input: AgentInput,
+        scene_token: Optional[str] = None,
+        log_name: Optional[str] = None,
+    ) -> Dict[str, Tensor]:
         """
         Computes features from the AgentInput object, i.e., without access to ground-truth.
         Outputs a dictionary where each item has a unique identifier and maps to a single feature tensor.

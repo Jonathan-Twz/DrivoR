@@ -60,12 +60,20 @@ def run_test_evaluation(
 
     for token in tqdm(input_loader, desc="Running evaluation"):
         # try:
-        agent_input = input_loader.get_agent_input_from_token(token)
+        scene = input_loader.get_scene_from_token(token)
+        agent_input = scene.get_agent_input()
+        md = scene.scene_metadata
 
         features: Dict[str, torch.Tensor] = {}
         # build features
         for builder in agent.get_feature_builders():
-            features.update(builder.compute_features(agent_input))
+            features.update(
+                builder.compute_features(
+                    agent_input,
+                    scene_token=md.initial_token,
+                    log_name=md.log_name,
+                )
+            )
 
         # add batch dimension
         features = {k: v for k, v in features.items()}

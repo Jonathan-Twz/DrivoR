@@ -22,7 +22,12 @@ class EgoStatusFeatureBuilder(AbstractFeatureBuilder):
         """Inherited, see superclass."""
         return "ego_status_feature"
 
-    def compute_features(self, agent_input: AgentInput) -> Dict[str, torch.Tensor]:
+    def compute_features(
+        self,
+        agent_input: AgentInput,
+        scene_token: Optional[str] = None,
+        log_name: Optional[str] = None,
+    ) -> Dict[str, torch.Tensor]:
         """Inherited, see superclass."""
         ego_status = agent_input.ego_statuses[-1]
         velocity = torch.tensor(ego_status.ego_velocity)

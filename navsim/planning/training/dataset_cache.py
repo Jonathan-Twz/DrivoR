@@ -199,7 +199,11 @@ class Dataset(torch.utils.data.Dataset):
 
         for builder in self._feature_builders:
             data_dict_path = token_path / (builder.get_unique_name() + ".gz")
-            data_dict = builder.compute_features(agent_input)
+            data_dict = builder.compute_features(
+                agent_input,
+                scene_token=metadata.initial_token,
+                log_name=metadata.log_name,
+            )
             dump_feature_target_to_pickle(data_dict_path, data_dict)
 
         for builder in self._target_builders:
@@ -223,6 +227,11 @@ class Dataset(torch.utils.data.Dataset):
             data_dict_path = token_path / (builder.get_unique_name() + ".gz")
             data_dict = load_feature_target_from_pickle(data_dict_path)
             features.update(data_dict)
+
+        log_name = token_path.parent.name
+        for builder in self._feature_builders:
+            if hasattr(builder, "maybe_load_bev_into_features"):
+                builder.maybe_load_bev_into_features(features, token, log_name)
 
         targets: Dict[str, torch.Tensor] = {}
         for builder in self._target_builders:

@@ -94,6 +94,16 @@ config:
     time_horizon: 4
     interval_length: 0.5
 
+  ####################
+  # Precomputed BEV features (optional extra input; concat tokens to camera scene tokens)
+  use_bev_feature: false
+  bev_feature_type: vtransform   # vtransform | decoder_neck  (file suffix)
+  bev_channels: 80               # 80 for vtransform, 256 for decoder_neck
+  bev_spatial_hw: [128, 128]
+  bev_features_root: /media/hdd/wenzhe/bev_features
+  bev_data_split: trainval      # subfolder under bev_features_root; use test for navtest eval
+  # load_checkpoint_strict: null  # omit for auto: strict=False when use_bev_feature is true
+  freeze_pretrained_except_bev: false  # if true, optimizer only updates bev_encoder/bev_proj (phase-1 finetune)
 
 
 loss:

@@ -103,6 +103,33 @@ class DrivoRModel(nn.Module):
 
         self.b2d=config.b2d
 
+        # Optional precomputed BEV map -> token sequence (concat to camera scene tokens)
+        self._use_bev = bool(config.get("use_bev_feature", False))
+        if self._use_bev:
+            c_in = int(config.get("bev_channels", 80))
+            self.bev_encoder = nn.Sequential(
+                nn.Conv2d(c_in, 128, kernel_size=3, stride=2, padding=1),
+                nn.GELU(),
+                nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+                nn.GELU(),
+                nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+                nn.GELU(),
+                nn.AdaptiveAvgPool2d((4, 4)),
+            )
+            d_model = int(config.tf_d_model)
+            self.bev_proj = nn.Linear(256, d_model)
+
+    def _zero_bev_batch(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        c = int(self._config.get("bev_channels", 80))
+        h, w = self._config.get("bev_spatial_hw", [128, 128])
+        return torch.zeros((batch_size, c, int(h), int(w)), device=device, dtype=dtype)
+
+    def _encode_bev_map(self, bev: torch.Tensor) -> torch.Tensor:
+        """bev: (B, C, H, W) -> (B, K, tf_d_model) with K=16."""
+        x = self.bev_encoder(bev)
+        b, c, h, w = x.shape
+        x = x.flatten(2).transpose(1, 2)
+        return self.bev_proj(x)
 
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         
@@ -119,8 +146,7 @@ class DrivoRModel(nn.Module):
 
 
         batch_size = ego_status.shape[0]
-
-
+        dev = ego_status.device
 
         scene_features = []
         # image features
@@ -146,6 +172,18 @@ class DrivoRModel(nn.Module):
             lidar_scene_tokens = self.lidar_backbone(img, scene_tokens)
             log.debug(f"Backbone lidar - {lidar_scene_tokens.shape}")
             scene_features.append(lidar_scene_tokens)
+
+        # precomputed BEV feature map (optional)
+        if getattr(self, "_use_bev", False):
+            if "bev_feature" in features and features["bev_feature"] is not None:
+                bev = features["bev_feature"].float().to(device=dev)
+                if bev.dim() == 3:
+                    bev = bev.unsqueeze(0)
+            else:
+                bev = self._zero_bev_batch(batch_size, dev, torch.float32)
+            bev_tokens = self._encode_bev_map(bev)
+            log.debug(f"BEV tokens - {bev_tokens.shape}")
+            scene_features.append(bev_tokens)
 
         scene_features = torch.cat(scene_features, dim=1)
         log.debug(f"Scene features - {scene_features.shape}")

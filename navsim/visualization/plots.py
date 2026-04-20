@@ -80,7 +80,7 @@ def plot_bev_with_agent(scene: Scene, agent: AbstractAgent) -> Tuple[plt.Figure,
     """
 
     human_trajectory = scene.get_future_trajectory()
-    agent_trajectory = agent.compute_trajectory(scene.get_agent_input())
+    agent_trajectory = agent.compute_trajectory(scene.get_agent_input(), scene)
 
     frame_idx = scene.scene_metadata.num_history_frames - 1
     fig, ax = plt.subplots(1, 1, figsize=BEV_PLOT_CONFIG["figure_size"])
@@ -196,7 +196,7 @@ def plot_cameras_frame_with_agent(scene: Scene, frame_idx: int, agent: AbstractA
         human_trajectory = scene.get_future_trajectory()
     except AssertionError:
         human_trajectory = None
-    agent_trajectory = agent.compute_trajectory(agent_scene.get_agent_input())
+    agent_trajectory = agent.compute_trajectory(agent_scene.get_agent_input(), agent_scene)
 
     frame = scene.frames[frame_idx]
     fig, ax = plt.subplots(3, 3, figsize=CAMERAS_PLOT_CONFIG["figure_size"])

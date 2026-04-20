@@ -1,9 +1,9 @@
 from abc import abstractmethod, ABC
-from typing import Dict, Union, List
+from typing import Dict, List, Optional, Union
 import torch
 import pytorch_lightning as pl
 
-from navsim.common.dataclasses import AgentInput, Trajectory, SensorConfig
+from navsim.common.dataclasses import AgentInput, Scene, Trajectory, SensorConfig
 from navsim.planning.training.abstract_feature_target_builder import AbstractFeatureBuilder, AbstractTargetBuilder
 
 
@@ -59,17 +59,25 @@ class AbstractAgent(torch.nn.Module, ABC):
         """
         raise NotImplementedError("No target builders. Agent does not support training.")
 
-    def compute_trajectory(self, agent_input: AgentInput) -> Trajectory:
+    def compute_trajectory(self, agent_input: AgentInput, scene: Optional[Scene] = None) -> Trajectory:
         """
         Computes the ego vehicle trajectory.
         :param current_input: Dataclass with agent inputs.
+        :param scene: Optional scene (pass to resolve token/log for auxiliary inputs e.g. precomputed BEV).
         :return: Trajectory representing the predicted ego's position in future
         """
         self.eval()
         features: Dict[str, torch.Tensor] = {}
+        scene_token: Optional[str] = None
+        log_name: Optional[str] = None
+        if scene is not None:
+            scene_token = scene.scene_metadata.initial_token
+            log_name = scene.scene_metadata.log_name
         # build features
         for builder in self.get_feature_builders():
-            features.update(builder.compute_features(agent_input))
+            features.update(
+                builder.compute_features(agent_input, scene_token=scene_token, log_name=log_name)
+            )
 
         # add batch dimension
         features = {k: v.unsqueeze(0) for k, v in features.items()}
