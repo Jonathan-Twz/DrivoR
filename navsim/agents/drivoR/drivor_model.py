@@ -6,6 +6,8 @@ from .score_module.scorer import Scorer
 from .transformer_decoder import TransformerDecoder, TransformerDecoderScorer
 from .layers.image_encoder.dinov2_lora import ImgEncoder
 from .layers.utils.mlp import MLP
+from .layers.bev_tokenizer import BevTokenizer
+from .layers.bev_scorer_blocks import BevAwareScorer
 from navsim.agents.drivoR.utils import pylogger
 log = pylogger.get_pylogger(__name__)
 import logging
@@ -82,8 +84,24 @@ class DrivoRModel(nn.Module):
         # trajectory decoder
         self.trajectory_decoder = TransformerDecoder(proj_drop=0.1, drop_path=0.2, config=config)
 
-        # scorer decoder
-        self.scorer_attention = TransformerDecoderScorer(num_layers=config.scorer_ref_num, d_model=config.tf_d_model, proj_drop=0.1, drop_path=0.2, config=config)
+        # scorer decoder (BEV-aware when use_bev_feature is true)
+        self._use_bev = bool(config.get("use_bev_feature", False))
+        if self._use_bev:
+            self.scorer_attention = BevAwareScorer(
+                num_layers=config.scorer_ref_num,
+                d_model=config.tf_d_model,
+                proj_drop=0.1,
+                drop_path=0.2,
+                config=config,
+            )
+        else:
+            self.scorer_attention = TransformerDecoderScorer(
+                num_layers=config.scorer_ref_num,
+                d_model=config.tf_d_model,
+                proj_drop=0.1,
+                drop_path=0.2,
+                config=config,
+            )
 
         self.pos_embed = nn.Sequential(
                 nn.Linear(self.poses_num * 3, config.tf_d_ffn),
@@ -103,6 +121,30 @@ class DrivoRModel(nn.Module):
 
         self.b2d=config.b2d
 
+        # Precomputed BEV feature map -> token sequence (scorer-side injection only)
+        if self._use_bev:
+            bev_tok_cfg = config.get("bev_tokenizer", {})
+
+            def _bt(k, default):
+                try:
+                    return bev_tok_cfg.get(k, default)
+                except Exception:
+                    return getattr(bev_tok_cfg, k, default)
+
+            num_tok = _bt("num_tokens", 64)
+            self.bev_tokenizer = BevTokenizer(
+                in_channels=int(config.get("bev_channels", 80)),
+                d_model=int(config.tf_d_model),
+                patch_size=int(_bt("patch_size", 8)),
+                spatial_hw=list(config.get("bev_spatial_hw", [128, 128])),
+                num_tokens=int(num_tok) if num_tok else None,
+                use_self_attn_block=bool(_bt("use_self_attn_block", False)),
+            )
+
+    def _zero_bev_batch(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        c = int(self._config.get("bev_channels", 80))
+        h, w = self._config.get("bev_spatial_hw", [128, 128])
+        return torch.zeros((batch_size, c, int(h), int(w)), device=device, dtype=dtype)
 
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         
@@ -119,8 +161,7 @@ class DrivoRModel(nn.Module):
 
 
         batch_size = ego_status.shape[0]
-
-
+        dev = ego_status.device
 
         scene_features = []
         # image features
@@ -150,6 +191,18 @@ class DrivoRModel(nn.Module):
         scene_features = torch.cat(scene_features, dim=1)
         log.debug(f"Scene features - {scene_features.shape}")
 
+        # BEV tokens for scorer-side dual cross-attention (optional)
+        bev_tokens = None
+        if getattr(self, "_use_bev", False):
+            if "bev_feature" in features and features["bev_feature"] is not None:
+                bev = features["bev_feature"].float().to(device=dev)
+                if bev.dim() == 3:
+                    bev = bev.unsqueeze(0)
+            else:
+                bev = self._zero_bev_batch(batch_size, dev, torch.float32)
+            bev_tokens = self.bev_tokenizer(bev)
+            log.debug(f"BEV tokens - {bev_tokens.shape}")
+
         # initial trajectories
         proposals = self.traj_head[0](traj_tokens).reshape(traj_tokens.shape[0], -1, self.poses_num, self.state_size)
         proposal_list = [proposals]
@@ -175,7 +228,10 @@ class DrivoRModel(nn.Module):
         B,N,_,_=proposals.shape
 
         embedded_traj = self.pos_embed(proposals.reshape(B, N, -1).detach())  # (B, N, d_model)
-        tr_out = self.scorer_attention(embedded_traj, scene_features)  # (B, N, d_model)
+        if getattr(self, "_use_bev", False):
+            tr_out = self.scorer_attention(embedded_traj, scene_features, bev_tokens)  # (B, N, d_model)
+        else:
+            tr_out = self.scorer_attention(embedded_traj, scene_features)  # (B, N, d_model)
         tr_out = tr_out+ego_token
         pred_logit,pred_logit2, pred_agents_states, pred_area_logit ,bev_semantic_map,agent_states,agent_labels= self.scorer(proposals, tr_out)
 

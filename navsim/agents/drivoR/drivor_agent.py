@@ -87,7 +87,11 @@ class DrivoRAgent(AbstractAgent):
         if not cache_data:
             self._drivor_model = DrivoRModel(config)
 
-        if not cache_data and self._checkpoint_path == "": # only for training
+        # Training infra: enable whenever a loss module is provided via Hydra,
+        # regardless of whether a pre-trained checkpoint is also being loaded
+        # (e.g. Phase-1 fine-tuning with frozen backbone).
+        training_mode = (not cache_data) and (loss is not None)
+        if training_mode:
             self.bce_logit_loss = nn.BCEWithLogitsLoss()
             self.b2d = config.b2d
 
@@ -145,7 +149,54 @@ class DrivoRAgent(AbstractAgent):
             else:
                 state_dict: Dict[str, Any] = torch.load(self._checkpoint_path, map_location=torch.device("cpu"))[
                     "state_dict"]
-            self.load_state_dict({k.replace("agent._drivor_model", "_drivor_model"): v for k, v in state_dict.items()})
+            mapped = {k.replace("agent._drivor_model", "_drivor_model"): v for k, v in state_dict.items()}
+
+            strict_override = self._config.get("load_checkpoint_strict", None)
+            use_bev = bool(self._config.get("use_bev_feature", False))
+            strict = bool(strict_override) if strict_override is not None else (not use_bev)
+
+            missing, unexpected = self.load_state_dict(mapped, strict=strict)
+
+            if not strict:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                expected_missing_prefixes = (
+                    "_drivor_model.bev_tokenizer.",
+                )
+
+                def _is_expected_missing(name: str) -> bool:
+                    if name.startswith(expected_missing_prefixes):
+                        return True
+                    if name.startswith("_drivor_model.scorer_attention.layers."):
+                        parts = name.split(".", 4)
+                        if len(parts) < 5:
+                            return False
+                        rest = parts[4]
+                        return (
+                            rest.startswith("cross_attn_bev")
+                            or rest.startswith("self_attn_lora")
+                            or rest.startswith("cross_attn_lora")
+                            or rest.startswith("mlp_lora")
+                        )
+                    return False
+
+                expected = [k for k in missing if _is_expected_missing(k)]
+                unexpected_missing = [k for k in missing if not _is_expected_missing(k)]
+                logger.info(
+                    "Checkpoint loaded with strict=False. expected_missing=%d, "
+                    "unexpected_missing=%d, unexpected_keys=%d",
+                    len(expected),
+                    len(unexpected_missing),
+                    len(unexpected),
+                )
+                if unexpected_missing:
+                    logger.warning(
+                        "Unexpected missing keys (not matching BEV/LoRA prefixes): %s",
+                        unexpected_missing[:20],
+                    )
+                if unexpected:
+                    logger.warning("Unexpected keys in checkpoint: %s", unexpected[:20])
 
     def get_sensor_config(self) :
         """Inherited, see superclass."""
@@ -234,15 +285,67 @@ class DrivoRAgent(AbstractAgent):
     ) -> Dict:
         return self.loss(targets, pred, self._config, self.compute_score)
 
+    def _collect_trainable_params(self):
+        """Select parameters for the optimizer.
+
+        When ``freeze_pretrained_except_bev_scorer`` is True, only the new BEV
+        tokenizer, side-LoRA adapters and the new ``cross_attn_bev*`` sublayers
+        inside ``scorer_attention`` are trainable; everything else is frozen.
+        Otherwise all parameters are trained.
+        """
+
+        freeze_bev_only = bool(self._config.get("freeze_pretrained_except_bev_scorer", False))
+        if not freeze_bev_only:
+            return list(self._drivor_model.parameters())
+
+        def _is_trainable(name: str) -> bool:
+            if name.startswith("bev_tokenizer."):
+                return True
+            if name.startswith("scorer_attention.layers."):
+                # Strip the "scorer_attention.layers.<i>." prefix to inspect the
+                # module name inside the BevAwareBlock.
+                parts = name.split(".", 3)
+                if len(parts) < 4:
+                    return False
+                rest = parts[3]
+                return (
+                    rest.startswith("cross_attn_bev")
+                    or rest.startswith("self_attn_lora")
+                    or rest.startswith("cross_attn_lora")
+                    or rest.startswith("mlp_lora")
+                )
+            return False
+
+        params = []
+        for n, p in self._drivor_model.named_parameters():
+            trainable = _is_trainable(n)
+            p.requires_grad = bool(trainable)
+            if trainable:
+                params.append(p)
+        if not params:
+            raise RuntimeError(
+                "freeze_pretrained_except_bev_scorer=True but no bev_tokenizer / "
+                "scorer_bev / side-LoRA parameters were found; make sure "
+                "use_bev_feature=True and the scorer was built as BevAwareScorer."
+            )
+        import logging
+
+        logging.getLogger(__name__).info(
+            "freeze_pretrained_except_bev_scorer=True: training %d parameter tensors.",
+            len(params),
+        )
+        return params
+
     def get_optimizers(self):
 
         global_batchsize = self.batch_size * self.num_gpus
+        params = self._collect_trainable_params()
         if self._lr_args["name"] == "Adam":
             lr = self._lr_args["base_lr"] * math.sqrt(global_batchsize / self._lr_args["base_batch_size"])
-            optimizer = torch.optim.Adam(self._drivor_model.parameters(), lr=lr)
+            optimizer = torch.optim.Adam(params, lr=lr)
         elif self._lr_args["name"] == "AdamW":
             lr = self._lr_args["base_lr"] * math.sqrt(global_batchsize / self._lr_args["base_batch_size"])
-            optimizer = torch.optim.AdamW(self._drivor_model.parameters(), lr=lr)
+            optimizer = torch.optim.AdamW(params, lr=lr)
         else:
             raise NotImplementedError
 

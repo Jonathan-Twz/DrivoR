@@ -1,0 +1,22 @@
+---
+description: DrivoR BEV scorer training context and local data paths
+alwaysApply: true
+---
+
+# DrivoR BEV Training Context
+
+- Always answer the user in Simplified Chinese unless they explicitly request otherwise.
+- This repo is DrivoR at `/home/wenzhe/wm_ws/DrivoR`; avoid using WoTE scripts/configs accidentally.
+- For BEV scorer fine-tuning, use scorer-side BEV injection only: `BevTokenizer` -> `BevAwareScorer` -> new `cross_attn_bev`; do not add encoder-side BEV fusion.
+- Phase-1 intent: load pretrained DrivoR checkpoint, freeze the original network, train only `bev_tokenizer.*`, `scorer_attention.layers.*.cross_attn_bev*`, and `*_lora.*`.
+- Precomputed BEV features should use pretrained BEVFusion exports, not the stage3 exports unless explicitly requested.
+- Current BEV data path is `/media/T5/bev_feature/exports_pretrained/trainval/<log>/<token>_decoder_neck.pt`.
+- `/media/T5/bev_features` is an empty near-duplicate path; do not use it.
+- BEV tensors are `decoder_neck` features with shape `(256, 128, 128)`, so use `bev_feature_type=decoder_neck` and `bev_channels=256`.
+- `manifest_trainval_30k.json` under `/media/T5/bev_feature` contains 30,000 BEV tokens; only about 20,291 overlap current `navtrain`.
+- The user does not want SimScale/synthetic scaling. Do not rely on `train_metric_synthetic_reaction_pdm_v1.0-*` caches unless they explicitly change this.
+- To run with partial BEV data, prefer making a BEV-only navtrain subset from `manifest_trainval_30k.json ∩ navtrain`, then metric-cache that subset.
+- Existing full-ish metric cache is `/home/wenzhe/wm_ws/DrivoR/exp/train_metric_cache` with about 47,950 tokens; it does not cover full `navtrain`.
+- A previous interrupted rsync left partial cache data at `/media/hdd2/wenzhe/navsim_exp/train_metric_cache`; treat it as incomplete unless verified.
+- The root disk has been tight; put new cache outputs on `/media/T5` or `/media/hdd2`, not under the repo `exp/` unless space is confirmed.
+- WandB is not installed in the `drivoR` conda env, but Lightning logging via `self.log(...)` is already present; enabling WandB requires installing `wandb` and wiring `WandbLogger` into the Trainer.

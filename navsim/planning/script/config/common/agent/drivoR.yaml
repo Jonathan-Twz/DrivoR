@@ -94,6 +94,31 @@ config:
     time_horizon: 4
     interval_length: 0.5
 
+  ####################
+  # Precomputed BEV features (optional extra input; injected only on scorer side)
+  use_bev_feature: false
+  bev_feature_type: decoder_neck # vtransform | decoder_neck  (file suffix)
+  bev_channels: 256              # 80 for vtransform, 256 for decoder_neck
+  bev_spatial_hw: [128, 128]
+  bev_features_root: /media/hdd/wenzhe/bev_features
+  bev_data_split: trainval       # subfolder under bev_features_root; use test for navtest eval
+  # load_checkpoint_strict: null  # omit for auto: strict=False when use_bev_feature is true
+
+  bev_tokenizer:
+    patch_size: 8                 # 128/8 = 16, initial 256 tokens before pooling
+    num_tokens: 64                # adaptive-pool to sqrt(num_tokens)^2 tokens; set null to disable
+    use_self_attn_block: false
+
+  scorer_bev:
+    lora_rank: 8
+    lora_dropout: 0.0
+    add_new_cross_attn: true      # add zero-init BEV cross-attention sublayer per scorer block
+    init_gate: 0.0                # LayerScale init for the new BEV cross-attn (0.0 = identity at start)
+
+  # Phase-1 training switch: when true, optimizer only updates BEV tokenizer, side-LoRA and the
+  # new cross_attn_bev sublayers inside scorer_attention.  All other parameters are frozen.
+  freeze_pretrained_except_bev_scorer: false
+
 
 
 loss:
