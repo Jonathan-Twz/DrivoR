@@ -88,6 +88,7 @@ class DrivoRFeatureBuilder(AbstractFeatureBuilder):
         if not self._config.get("use_bev_feature", False):
             return
         if "bev_feature" in features and features["bev_feature"] is not None:
+            features["bev_feature"] = self._normalize_bev_tensor(features["bev_feature"])
             return
         self._attach_bev_feature(features, scene_token, log_name)
 
@@ -107,6 +108,34 @@ class DrivoRFeatureBuilder(AbstractFeatureBuilder):
         h, w = self._config.get("bev_spatial_hw", [128, 128])
         return torch.zeros((c, int(h), int(w)), dtype=torch.float32)
 
+    def _normalize_bev_tensor(self, bev: torch.Tensor, path: Optional[Path] = None) -> torch.Tensor:
+        """Return a per-sample BEV tensor in (C, H, W) layout for DataLoader collation."""
+        bev = bev.float()
+        if bev.dim() == 4 and bev.shape[0] == 1:
+            bev = bev.squeeze(0)
+
+        if bev.dim() != 3:
+            source = f" from {path}" if path is not None else ""
+            logger.warning(
+                "BEV tensor%s has unsupported shape %s; using zeros.",
+                source,
+                tuple(bev.shape),
+            )
+            return self._empty_bev_tensor()
+
+        expected_channels = int(self._config.get("bev_channels", bev.shape[0]))
+        if bev.shape[0] != expected_channels:
+            source = f" from {path}" if path is not None else ""
+            logger.warning(
+                "BEV tensor%s has %d channels, expected %d; using zeros.",
+                source,
+                bev.shape[0],
+                expected_channels,
+            )
+            return self._empty_bev_tensor()
+
+        return bev
+
     def _attach_bev_feature(
         self, features: Dict[str, torch.Tensor], scene_token: str, log_name: str
     ) -> None:
@@ -118,7 +147,7 @@ class DrivoRFeatureBuilder(AbstractFeatureBuilder):
                     logger.warning("BEV file %s is not a tensor; using zeros.", path)
                     features["bev_feature"] = self._empty_bev_tensor()
                 else:
-                    features["bev_feature"] = t.float()
+                    features["bev_feature"] = self._normalize_bev_tensor(t, path)
             except Exception as e:
                 logger.warning("Failed to load BEV %s: %s; using zeros.", path, e)
                 features["bev_feature"] = self._empty_bev_tensor()
