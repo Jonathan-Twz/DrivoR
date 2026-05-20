@@ -1,22 +1,92 @@
 ---
-description: DrivoR BEV scorer training context and local data paths
+description: DrivoR BEV scorer training context — server, paths, known issues
 alwaysApply: true
 ---
 
 # DrivoR BEV Training Context
 
+## General
+
 - Always answer the user in Simplified Chinese unless they explicitly request otherwise.
-- This repo is DrivoR at `/home/wenzhe/wm_ws/DrivoR`; avoid using WoTE scripts/configs accidentally.
-- For BEV scorer fine-tuning, use scorer-side BEV injection only: `BevTokenizer` -> `BevAwareScorer` -> new `cross_attn_bev`; do not add encoder-side BEV fusion.
-- Phase-1 intent: load pretrained DrivoR checkpoint, freeze the original network, train only `bev_tokenizer.*`, `scorer_attention.layers.*.cross_attn_bev*`, and `*_lora.*`.
-- Precomputed BEV features should use pretrained BEVFusion exports, not the stage3 exports unless explicitly requested.
-- Current BEV data path is `/media/T5/bev_feature/exports_pretrained/trainval/<log>/<token>_decoder_neck.pt`.
-- `/media/T5/bev_features` is an empty near-duplicate path; do not use it.
-- BEV tensors are `decoder_neck` features with shape `(256, 128, 128)`, so use `bev_feature_type=decoder_neck` and `bev_channels=256`.
-- `manifest_trainval_30k.json` under `/media/T5/bev_feature` contains 30,000 BEV tokens; only about 20,291 overlap current `navtrain`.
-- The user does not want SimScale/synthetic scaling. Do not rely on `train_metric_synthetic_reaction_pdm_v1.0-*` caches unless they explicitly change this.
-- To run with partial BEV data, prefer making a BEV-only navtrain subset from `manifest_trainval_30k.json ∩ navtrain`, then metric-cache that subset.
-- Existing full-ish metric cache is `/home/wenzhe/wm_ws/DrivoR/exp/train_metric_cache` with about 47,950 tokens; it does not cover full `navtrain`.
-- A previous interrupted rsync left partial cache data at `/media/hdd2/wenzhe/navsim_exp/train_metric_cache`; treat it as incomplete unless verified.
-- The root disk has been tight; put new cache outputs on `/media/T5` or `/media/hdd2`, not under the repo `exp/` unless space is confirmed.
-- WandB is not installed in the `drivoR` conda env, but Lightning logging via `self.log(...)` is already present; enabling WandB requires installing `wandb` and wiring `WandbLogger` into the Trainer.
+- This repo is DrivoR at `/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR`; avoid using WoTE scripts/configs accidentally.
+- The active conda env is `drivoR-share` (`/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share`).
+- `wandb 0.24.2` is installed in `drivoR-share`.
+
+## Server (guppy)
+
+- Host: `guppy.engin.umich.edu`
+- GPUs: 2× NVIDIA RTX A6000 (48 GB each).
+- System RAM: ~125 GB; **CPU RAM is the primary bottleneck**, not GPU VRAM.
+- Storage: `/mnt/ws-frb` is **NFS v3** (soft mount, ~95% full). Sequential write ~520 MiB/s; random/metadata ops much slower.
+- DNS can be intermittent → W&B online mode may fail; prefer `WANDB_MODE=offline` for long runs, then `wandb sync` afterwards.
+- NCCL: default P2P/IB transport fails on guppy; always export `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.
+
+## Data Paths
+
+| Purpose | Path |
+|---------|------|
+| DrivoR root | `DrivoR/` |
+| Experiment output | `DrivoR/exp/` (`NAVSIM_EXP_ROOT`) |
+| OpenScene / NavSIM data | `navsim_dataset/` (`OPENSCENE_DATA_ROOT`) |
+| Precomputed BEV features | `navsim_bev_feature/exports_pretrained/{trainval,test}/**/*_decoder_neck.pt` |
+| Train metric cache | `DrivoR/exp/train_metric_cache/` |
+| Dataset cache (old, generic, currently used) | `DrivoR/exp/navsim_cache_nommcv_full` |
+| Dataset cache (training-matched, not tested) | `DrivoR/exp/navsim_cache_nommcv_same_as_training` |
+| BEV token filter list | `DrivoR/exp/bev_feature_tokens/trainval_decoder_neck_tokens_full.txt` (~152 495 tokens) |
+
+## BEV Scorer Phase-1 Training
+
+- Launcher: `scripts/training/run_drivor_bev_phase1.sh`
+- Config entry: `navsim/planning/script/config/training/default_training.yaml` (loaded via `run_training_full.py` Hydra `CONFIG_NAME`).
+- Intent: load pretrained DrivoR checkpoint, freeze the original network, train only `bev_tokenizer.*`, `scorer_attention.layers.*.cross_attn_bev*`, and `*_lora.*`.
+- BEV tensors are `decoder_neck` features, shape `(256, 128, 128)`.
+- `area_pred=false` and `agent_pred=false` → `pred_ce_loss`, `pred_l1_loss`, `pred_area_loss` are always 0; this is expected.
+- LR uses sqrt scaling: `lr = base_lr * sqrt(global_batch / base_batch_size)` — no manual LR adjustment needed when changing batch.
+- Typical speed: 2GPU/16batch/8worker ≈ 5.8hr/epoch (with dataset cache); 85109 train samples, 18179 val samples.
+
+## Dataset Caching
+
+- Script: `scripts/training/run_dataset_caching.sh` → calls `navsim/planning/script/run_dataset_caching.py`.
+- **Critical**: Cache must be generated with the **exact same agent config** as training. Key params that change sample schema:
+  - `agent.config.long_trajectory_additional_poses=2` (adds `trajectory_long` key)
+  - `agent.config.use_bev_feature=true` / `bev_feature_type` / `bev_channels` / `bev_features_root` / `bev_data_split`
+- Mismatch causes `KeyError` at DataLoader collation (e.g. `KeyError: 'trajectory_long'`).
+- Use `worker=sequential` for stability; Ray workers tend to crash during caching.
+- Cache loading is fast (~seconds for 85k samples) vs SceneLoader initialization (30+ hours).
+
+## Multi-GPU / DDP
+
+- Strategy: `ddp_find_unused_parameters_true` (frozen params require it).
+- `run_training_full.py` uses `LocalMetadataDDPStrategy` to avoid NCCL object broadcasts for identical local metadata.
+- W&B logger is instantiated **only on rank 0**; other ranks get `logger=False` and `LearningRateMonitor` is filtered out.
+- Ray scorer is disabled during multi-GPU training (`use_ray_score=false` when `num_gpus > 1`).
+
+## Memory & Stability
+
+- **CPU RAM is the kill-zone**: `BATCH_SIZE × NUM_GPUS × NUM_WORKERS × PREFETCH_FACTOR × ~16 MB/sample` must fit in ~125 GB.
+- Safe starting point: `BATCH_SIZE=8 NUM_WORKERS=2 PREFETCH_FACTOR=1`; scale up batch while reducing workers.
+- For larger effective batch without more RAM: use `trainer.params.accumulate_grad_batches`.
+- Process `Killed` (SIGKILL) with no Python traceback = system OOM; check `launcher.log` for exit code and timing.
+- `pin_memory=true` (from yaml default) increases pinned RAM footprint; disable if RAM-constrained.
+
+## Logging & Metrics (PL + WandB)
+
+- `launcher.log` (in experiment output dir) captures full stdout/stderr, exit code, and timestamps.
+- `run_training_full.log` is Hydra's main process log; `train_ddp_process_*.log` for sub-ranks.
+- W&B local data: `exp/ke/<experiment>/<uid>/wandb/run-*/`; if process was killed, run `wandb sync <dir>` to upload.
+- **PL metric naming rules**:
+  - `on_step=True, on_epoch=True` → PL auto-appends `_step` and `_epoch` suffixes (two metrics).
+  - `on_step=True, on_epoch=False` → metric name stays as-is, logged every step.
+  - `on_step=False, on_epoch=True` → metric name stays as-is, logged once per epoch.
+- Current config:
+  - `train/loss`: `on_step=True, on_epoch=True` → WandB shows `train/loss_step` and `train/loss_epoch`.
+  - Other train losses (trajectory_loss, etc.): `on_step=True, on_epoch=False` → WandB shows original name, logged every step.
+  - `val/score`: `on_step=True, on_epoch=True` → produces `val/score_epoch` for `ModelCheckpoint(monitor='val/score_epoch')`.
+  - Other val metrics: `on_step=False, on_epoch=True` → original name, logged once per epoch.
+
+## Don'ts
+
+- Do not use SimScale/synthetic scaling caches unless explicitly requested.
+- Do not use encoder-side BEV fusion; this is scorer-side injection only.
+- Do not trust `/media/T5/` or `/media/hdd2/` paths (these are from a previous machine).
+- Do not reuse a cache generated with different agent config — always regenerate with matching params.

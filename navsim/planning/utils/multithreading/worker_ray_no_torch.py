@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Union
@@ -75,11 +76,16 @@ def initialize_ray(
         # In this case, we will just start ray directly from this script
         number_of_nodes = 1
         logger.info("Starting ray local!")
+        rank_key = os.environ.get("LOCAL_RANK", os.environ.get("RANK", str(os.getpid())))
+        ray_tmp = Path(tempfile.gettempdir()) / "ray_navsim_ddprank" / f"rank_{rank_key}"
+        ray_tmp.mkdir(parents=True, exist_ok=True)
+        os.environ["RAY_TMPDIR"] = str(ray_tmp)
         ray.init(
             num_cpus=number_of_cpus_per_node,
             dashboard_host="0.0.0.0",
             local_mode=local_mode,
             log_to_driver=log_to_driver,
+            include_dashboard=False,
         )
 
     return WorkerResources(

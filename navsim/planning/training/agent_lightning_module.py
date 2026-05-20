@@ -28,6 +28,12 @@ class AgentLightningModule(pl.LightningModule):
         self.checkpoint_file=None
         self.for_viz = for_viz
 
+    def _sync_dist(self) -> bool:
+        """Only synchronize logs across ranks when running distributed."""
+        trainer = getattr(self, "trainer", None)
+        world_size = getattr(trainer, "world_size", 1) if trainer is not None else 1
+        return bool(world_size and world_size > 1)
+
     def _step(self, batch: Tuple[Dict[str, Tensor], Dict[str, Tensor]], logging_prefix: str) -> Tensor:
         """
         Propagates the model forward and backwards and computes/logs losses and metrics.
@@ -41,8 +47,13 @@ class AgentLightningModule(pl.LightningModule):
         loss_dict = self.agent.compute_loss(features, targets, prediction)
 
         if type(loss_dict) is dict:
+            sync_dist = self._sync_dist()
             for key,value in loss_dict.items():
-                self.log(f"{logging_prefix}/"+key, value, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+                metric_name = f"{logging_prefix}/{key}"
+                if key == "loss":
+                    self.log(metric_name, value, on_step=True, on_epoch=True, prog_bar=True, sync_dist=sync_dist)
+                else:
+                    self.log(metric_name, value, on_step=True, on_epoch=False, prog_bar=False, sync_dist=sync_dist)
             return loss_dict["loss"]
         else:
             return loss_dict
@@ -78,7 +89,7 @@ class AgentLightningModule(pl.LightningModule):
                 pdm_score = predictions["pdm_score"]
                 best_pred_score_values = pdm_score[torch.arange(len(pdm_score)), torch.argmax(pdm_score, dim=1)]
                 score_error = torch.abs(best_pred_score_values - proposal_scores).mean()
-                self.log(f"{logging_prefix}/score_error", score_error, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+                self.log(f"{logging_prefix}/score_error", score_error, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
                 
                 best_pred_score_index = torch.argmax(pdm_score, dim=1)
                 best_real_score_index = torch.argmax(all_proposal_scores, dim=1)
@@ -87,27 +98,27 @@ class AgentLightningModule(pl.LightningModule):
                 best_possible_scores = all_proposal_scores[torch.arange(len(all_proposal_scores)), best_real_score_index]
                 best_actual_scores = all_proposal_scores[torch.arange(len(all_proposal_scores)), best_pred_score_index]
                 lost_score = torch.mean(best_possible_scores - best_actual_scores)
-                self.log(f"{logging_prefix}/score_hit_rate", score_hit_rate, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-                self.log(f"{logging_prefix}/lost_score", lost_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+                self.log(f"{logging_prefix}/score_hit_rate", score_hit_rate, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
+                self.log(f"{logging_prefix}/lost_score", lost_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
 
                 top_5_indices_real = torch.topk(all_proposal_scores, k=5, dim=1).indices
                 top_5_score_hit_rate = _rowwise_isin(best_pred_score_index, top_5_indices_real).mean(dtype=torch.float32)
-                self.log(f"{logging_prefix}/top_5_score_hit_rate", top_5_score_hit_rate, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+                self.log(f"{logging_prefix}/top_5_score_hit_rate", top_5_score_hit_rate, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             
-            self.log(f"{logging_prefix}/score", final_score, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-            self.log(f"{logging_prefix}/best_score", best_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-            self.log(f"{logging_prefix}/mean_score", mean_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-            self.log(f"{logging_prefix}/l2", l2, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/score", final_score, on_step=True, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
+            self.log(f"{logging_prefix}/best_score", best_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
+            self.log(f"{logging_prefix}/mean_score", mean_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
+            self.log(f"{logging_prefix}/l2", l2, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             collision=trajectoy_scores[:,0].mean()
-            self.log(f"{logging_prefix}/collision", collision, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/collision", collision, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             drivable_area_compliance=trajectoy_scores[:,1].mean()
-            self.log(f"{logging_prefix}/dac", drivable_area_compliance, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/dac", drivable_area_compliance, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             ego_progress=trajectoy_scores[:,2].mean()
-            self.log(f"{logging_prefix}/progress", ego_progress, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/progress", ego_progress, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             time_to_collision_within_bound=trajectoy_scores[:,3].mean()
-            self.log(f"{logging_prefix}/ttc", time_to_collision_within_bound, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/ttc", time_to_collision_within_bound, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             comfort=trajectoy_scores[:,4].mean()
-            self.log(f"{logging_prefix}/comfort", comfort, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.log(f"{logging_prefix}/comfort", comfort, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
 
             return final_score
         else:

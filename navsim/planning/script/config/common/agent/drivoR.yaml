@@ -118,6 +118,7 @@ config:
   # Phase-1 training switch: when true, optimizer only updates BEV tokenizer, side-LoRA and the
   # new cross_attn_bev sublayers inside scorer_attention.  All other parameters are frozen.
   freeze_pretrained_except_bev_scorer: false
+  use_ray_score: true
 
 
 

@@ -18,47 +18,95 @@ from .drivor_features import DrivoRFeatureBuilder
 import sys
 from omegaconf import OmegaConf
 import math
+from numbers import Number
+
+
+def _format_progress_metric(value: Any) -> str:
+    if torch.is_tensor(value):
+        if value.numel() == 1:
+            value = value.detach().item()
+        else:
+            return str(value)
+    if isinstance(value, Number):
+        return f"{value:.3f}"
+    return str(value)
+
 
 class LitProgressBar(ProgressBar):
 
     def __init__(self):
-        super().__init__()  # don't forget this :)
+        super().__init__()
         self.enable = True
+        self._train_pbar = None
+        self._val_pbar = None
+        self._epoch_start_time = None
 
     def disable(self):
         self.enable = False
 
+    def on_train_epoch_start(self, trainer, pl_module):
+        super().on_train_epoch_start(trainer, pl_module)
+        import time
+        from tqdm import tqdm
+        self._epoch_start_time = time.time()
+        total = self.total_train_batches
+        self._train_pbar = tqdm(
+            total=total,
+            desc=f"Epoch {trainer.current_epoch}/{trainer.max_epochs-1} [train]",
+            dynamic_ncols=True,
+            leave=True,
+        )
+
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
-        if batch_idx%100 == 0:
-            print(f"Epoch {trainer.current_epoch} - train {batch_idx} / {self.total_train_batches} - {self.get_metrics(trainer, pl_module)}")
-
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
-        if batch_idx%100 == 0:
-            print(f"Epoch {trainer.current_epoch} - val {batch_idx} / {self.total_train_batches} - {self.get_metrics(trainer, pl_module)}")
+        if self._train_pbar is not None:
+            self._train_pbar.update(1)
+            if batch_idx % 50 == 0:
+                metrics = self.get_metrics(trainer, pl_module)
+                short = {k.split("/")[-1]: _format_progress_metric(v) for k, v in metrics.items() if "train/" in k}
+                self._train_pbar.set_postfix(short, refresh=False)
 
     def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        super().on_train_epoch_end(self, pl_module)
+        import time
+        super().on_train_epoch_end(trainer, pl_module)
+        if self._train_pbar is not None:
+            self._train_pbar.close()
+            self._train_pbar = None
+        elapsed = time.time() - self._epoch_start_time if self._epoch_start_time else 0
         metrics = self.get_metrics(trainer, pl_module)
-        train_metrics = dict()
-        val_metrics = dict()
-        other_metrics = dict()
-        for k,v in metrics.items():
-            if "train/" in k:
-                train_metrics[k]=v
-            elif "val/" in k:
-                val_metrics[k]=v
-            else:
-                other_metrics[k]=v
-        print(f"\n###########  Epoch {trainer.current_epoch} ##########")
-        for k,v in train_metrics.items():
-            print(f"{k},{v:.3f}")
-        for k,v in val_metrics.items():
-            print(f"{k},{v:.3f}")
-        for k,v in other_metrics.items():
-            print(f"{k},{v:.3f}")
+        train_metrics = {k: v for k, v in metrics.items() if "train/" in k}
+        val_metrics = {k: v for k, v in metrics.items() if "val/" in k}
+        other_metrics = {k: v for k, v in metrics.items() if "train/" not in k and "val/" not in k}
+        print(f"\n###########  Epoch {trainer.current_epoch} ({elapsed:.0f}s) ##########")
+        for k, v in train_metrics.items():
+            print(f"{k},{_format_progress_metric(v)}")
+        for k, v in val_metrics.items():
+            print(f"{k},{_format_progress_metric(v)}")
+        for k, v in other_metrics.items():
+            print(f"{k},{_format_progress_metric(v)}")
         print(f"###########\n")
+
+    def on_validation_epoch_start(self, trainer, pl_module):
+        super().on_validation_epoch_start(trainer, pl_module)
+        from tqdm import tqdm
+        total = self.total_val_batches
+        self._val_pbar = tqdm(
+            total=total,
+            desc=f"Epoch {trainer.current_epoch}/{trainer.max_epochs-1} [val]",
+            dynamic_ncols=True,
+            leave=True,
+        )
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+        super().on_validation_batch_end(trainer, pl_module, outputs, batch, batch_idx, dataloader_idx)
+        if self._val_pbar is not None:
+            self._val_pbar.update(1)
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        super().on_validation_epoch_end(trainer, pl_module)
+        if self._val_pbar is not None:
+            self._val_pbar.close()
+            self._val_pbar = None
 
 class DrivoRAgent(AbstractAgent):
     def __init__(
@@ -95,7 +143,9 @@ class DrivoRAgent(AbstractAgent):
             self.bce_logit_loss = nn.BCEWithLogitsLoss()
             self.b2d = config.b2d
 
-            self.ray=True
+            self.ray = bool(config.get("use_ray_score", True))
+            if int(num_gpus) > 1:
+                self.ray = False
 
             if self.ray:
                 from navsim.planning.utils.multithreading.worker_ray_no_torch import RayDistributedNoTorch
@@ -382,13 +432,19 @@ class DrivoRAgent(AbstractAgent):
 
     def get_training_callbacks(self):
 
+        checkpoint_dir = None
+        train_output_dir = os.environ.get("DRIVOR_TRAIN_OUTPUT_DIR")
+        if train_output_dir:
+            checkpoint_dir = str(Path(train_output_dir) / "checkpoints")
+
         checkpoint_cb_best = ModelCheckpoint(save_top_k=1,
                                         monitor='val/score_epoch',
                                         filename='best-{epoch}-{step}',
-                                        mode="max"
+                                        mode="max",
+                                        dirpath=checkpoint_dir,
                                         )
         
-        checkpoint_cb = ModelCheckpoint(save_last=True)
+        checkpoint_cb = ModelCheckpoint(save_last=True, dirpath=checkpoint_dir)
 
         lr_monitor = LearningRateMonitor(logging_interval="step", 
                                             log_momentum=False,

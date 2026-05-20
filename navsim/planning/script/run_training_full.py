@@ -1,6 +1,8 @@
 import os
 import random
-from typing import Tuple
+import faulthandler
+import signal
+from typing import List, Tuple
 from pathlib import Path
 import logging
 import pickle
@@ -9,10 +11,12 @@ from datetime import datetime
 import hydra
 import numpy as np
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 import torch.distributed as dist
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.strategies import DDPStrategy
 
 from navsim.agents.abstract_agent import AbstractAgent
 from navsim.common.dataclasses import SceneFilter
@@ -25,8 +29,28 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = "config/training"
 CONFIG_NAME = "default_training"
 
+faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+
+
+class LocalMetadataDDPStrategy(DDPStrategy):
+    """DDP strategy that avoids NCCL object broadcasts for identical local metadata."""
+
+    def broadcast(self, obj, src: int = 0):
+        return obj
+
 def dist_ready():
     return dist.is_available() and dist.is_initialized()
+
+
+def _load_token_filter(token_file: str) -> List[str]:
+    """Load one scene token per line for restricting training to precomputed BEV features."""
+    token_path = Path(token_file)
+    if not token_path.is_file():
+        raise FileNotFoundError(f"scene_filter_token_file does not exist: {token_path}")
+
+    with open(token_path, "r") as f:
+        return [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]
+
 
 def build_datasets(cfg: DictConfig, agent: AbstractAgent) -> Tuple[Dataset, Dataset]:
     """
@@ -38,6 +62,11 @@ def build_datasets(cfg: DictConfig, agent: AbstractAgent) -> Tuple[Dataset, Data
     
     print("Train without caching....")
     train_scene_filter: SceneFilter = instantiate(cfg.train_test_split.scene_filter)
+    token_file = cfg.get("scene_filter_token_file", None)
+    if token_file:
+        train_scene_filter.tokens = _load_token_filter(token_file)
+        logger.info("Loaded %d scene filter tokens from %s", len(train_scene_filter.tokens), token_file)
+
     if train_scene_filter.log_names is not None:
         train_scene_filter.log_names = [
             log_name for log_name in train_scene_filter.log_names if log_name in cfg.train_logs or log_name in cfg.val_logs 
@@ -49,6 +78,9 @@ def build_datasets(cfg: DictConfig, agent: AbstractAgent) -> Tuple[Dataset, Data
     print("len(train_scene_filter.log_names) ", len(train_scene_filter.log_names))
 
     val_scene_filter: SceneFilter = instantiate(cfg.train_test_split.scene_filter)
+    if token_file:
+        val_scene_filter.tokens = train_scene_filter.tokens
+
     if val_scene_filter.log_names is not None:
         val_scene_filter.log_names = [log_name for log_name in val_scene_filter.log_names if log_name in cfg.val_logs]
     else:
@@ -101,6 +133,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Global Seed set to {cfg.seed}")
 
     logger.info(f"Path where all results are stored: {cfg.output_dir}")
+    os.environ["DRIVOR_TRAIN_OUTPUT_DIR"] = str(cfg.output_dir)
 
     logger.info("Building Agent")
     agent: AbstractAgent = instantiate(cfg.agent)
@@ -163,7 +196,25 @@ def main(cfg: DictConfig) -> None:
         cfg.train_ckpt_path = find_latest_checkpoint(search_pattern)
         print("cfg.train_ckpt_path ", cfg.train_ckpt_path)
 
-    trainer = pl.Trainer(**cfg.trainer.params, callbacks=agent.get_training_callbacks())
+    # Hydra configs with _target_ (e.g. WandbLogger) must be instantiated; passing a DictConfig
+    # as logger makes PL iterate it like a sequence of loggers but yields key strings → crash.
+    trainer_params = OmegaConf.to_container(cfg.trainer.params, resolve=True)
+    log_conf = trainer_params.get("logger", None)
+    if isinstance(log_conf, dict) and "_target_" in log_conf:
+        local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+        trainer_params["logger"] = instantiate(log_conf) if local_rank == 0 else False
+    elif log_conf in [None, "none", "None", "false", "False"]:
+        trainer_params["logger"] = False
+    strategy = trainer_params.get("strategy")
+    if isinstance(strategy, str) and strategy.startswith("ddp"):
+        trainer_params["strategy"] = LocalMetadataDDPStrategy(
+            find_unused_parameters=("find_unused_parameters_true" in strategy),
+            start_method="popen",
+        )
+    callbacks = agent.get_training_callbacks()
+    if trainer_params.get("logger") is False:
+        callbacks = [callback for callback in callbacks if not isinstance(callback, LearningRateMonitor)]
+    trainer = pl.Trainer(**trainer_params, callbacks=callbacks)
 
     if cfg.validation_run:
         logger.info("Starting Validation")
