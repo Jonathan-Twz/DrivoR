@@ -105,7 +105,7 @@ class AgentLightningModule(pl.LightningModule):
                 top_5_score_hit_rate = _rowwise_isin(best_pred_score_index, top_5_indices_real).mean(dtype=torch.float32)
                 self.log(f"{logging_prefix}/top_5_score_hit_rate", top_5_score_hit_rate, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             
-            self.log(f"{logging_prefix}/score", final_score, on_step=True, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
+            self.log(f"{logging_prefix}/score_epoch", final_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             self.log(f"{logging_prefix}/best_score", best_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             self.log(f"{logging_prefix}/mean_score", mean_score, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())
             self.log(f"{logging_prefix}/l2", l2, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist())

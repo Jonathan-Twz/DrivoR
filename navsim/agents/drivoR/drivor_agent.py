@@ -144,8 +144,6 @@ class DrivoRAgent(AbstractAgent):
             self.b2d = config.b2d
 
             self.ray = bool(config.get("use_ray_score", True))
-            if int(num_gpus) > 1:
-                self.ray = False
 
             if self.ray:
                 from navsim.planning.utils.multithreading.worker_ray_no_torch import RayDistributedNoTorch

@@ -22,22 +22,25 @@ PYTHON_BIN="${PYTHON_BIN:-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-shar
 BEV_FEATURES_ROOT="${BEV_FEATURES_ROOT:-$WORKSPACE_ROOT/navsim_bev_feature/exports_pretrained}"
 
 export HYDRA_FULL_ERROR=1
+
+# ENV variables
 export NUPLAN_MAP_VERSION="${NUPLAN_MAP_VERSION:-nuplan-maps-v1.0}"
 export NUPLAN_MAPS_ROOT="${NUPLAN_MAPS_ROOT:-$DATA_ROOT/maps}"
 export OPENSCENE_DATA_ROOT="${OPENSCENE_DATA_ROOT:-$DATA_ROOT}"
 # IMPORTANT: force the DrivoR devkit so we run DrivoR's run_training_full.py, not WoTE's.
 export NAVSIM_DEVKIT_ROOT="${NAVSIM_DEVKIT_ROOT:-$DRIVOR_ROOT}"
 export NAVSIM_EXP_ROOT="${NAVSIM_EXP_ROOT:-$DRIVOR_ROOT/exp}"
-export SUBSCORE_PATH="$NAVSIM_EXP_ROOT"
+
+export SUBSCORE_PATH="$NAVSIM_EXP_ROOT" # TODO: not used?
 
 # Terminal input
 BASELINE_CKPT="${1:?Usage: $0 <baseline_checkpoint.(ckpt|pth)> [experiment_name] [max_epochs]}"
 EXPERIMENT="${2:-training_drivor_bev_scorer_phase1}"
 MAX_EPOCHS="${3:-10}"
 
+# Experiment variables
 EXPERIMENT_UID="${EXPERIMENT_UID:-$(date +%m.%d_%H.%M)}"
-NUM_GPUS="${NUM_GPUS:-2}"
-# 0.46 GB per batch
+NUM_GPUS="${NUM_GPUS:-4}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 BASE_LR="${BASE_LR:-1e-4}"
 NUM_WORKERS="${NUM_WORKERS:-8}"
@@ -48,6 +51,7 @@ TRAIN_TEST_SPLIT="${TRAIN_TEST_SPLIT:-navtrain}"
 SPLIT="${SPLIT:-trainval}"
 # BEV phase-1 freezes most weights; some trainable params may not appear in every step's loss graph.
 # Plain "ddp" then fails with: unused parameters in DDP (see PyTorch DDP find_unused_parameters).
+# TODO: check this
 # TRAINER_STRATEGY="${TRAINER_STRATEGY:-auto}"
 # TRAINER_STRATEGY="${TRAINER_STRATEGY:-ddp}"
 TRAINER_STRATEGY="${TRAINER_STRATEGY:-ddp_find_unused_parameters_true}"
@@ -67,7 +71,7 @@ WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_START_METHOD="${WANDB_START_METHOD:-thread}"
 export WANDB__SERVICE_WAIT="${WANDB__SERVICE_WAIT:-300}"
 export WANDB_INIT_TIMEOUT="${WANDB_INIT_TIMEOUT:-300}"
-export WANDB_CONSOLE="${WANDB_CONSOLE:-off}"
+export WANDB_CONSOLE="${WANDB_CONSOLE:-wrap}"
 export NCCL_ASYNC_ERROR_HANDLING="${NCCL_ASYNC_ERROR_HANDLING:-1}"
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
@@ -216,7 +220,7 @@ PYTHONUNBUFFERED=1 \
   agent.lr_args.name=AdamW \
   agent.lr_args.base_lr="$BASE_LR" \
   agent.config.use_bev_feature=true \
-  agent.config.use_ray_score=false \
+  agent.config.use_ray_score=true \
   agent.config.freeze_pretrained_except_bev_scorer=true \
   agent.config.bev_feature_type="$BEV_FEATURE_TYPE" \
   agent.config.bev_channels=256 \

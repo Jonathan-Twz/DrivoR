@@ -137,6 +137,9 @@ def main(cfg: DictConfig) -> None:
 
     logger.info("Building Agent")
     agent: AbstractAgent = instantiate(cfg.agent)
+    # Load agent.checkpoint_path before Lightning wraps the module so fine-tuning
+    # actually starts from the requested baseline weights.
+    agent.initialize()
 
     logger.info("Building Lightning Module")
     lightning_module = AgentLightningModule(
