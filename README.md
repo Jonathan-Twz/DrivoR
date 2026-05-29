@@ -26,7 +26,7 @@ ViT-S dinoV2 pretrained model can be found in https://huggingface.co/timm/vit_sm
 The model weights are provided in *GitHub Releases*.
 # Installations 
 ```bash
-conda create -n drivoR python=3.8
+conda create -n drivoR python=3.9
 conda activate drivoR
 pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
 pip install -e ./nuplan-devkit
@@ -356,9 +356,9 @@ python $NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_create_submission_pickle_w
     agent.config.area_pred=false \
     agent.config.agent_pred=false \
     agent.config.ref_num=4 \
-    agent.config.noc=10.2 \
-    agent.config.dac=12.5\
-    agent.config.ddc=6.0 \
+    agent.config.noc=10 \
+    agent.config.dac=13 \
+    agent.config.ddc=6 \
     agent.config.ttc=14 \
     agent.config.ep=15 \
     agent.config.comfort=2.1 \
