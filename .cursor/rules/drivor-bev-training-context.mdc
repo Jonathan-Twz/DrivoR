@@ -21,6 +21,13 @@ alwaysApply: true
 - DNS can be intermittent → W&B online mode may fail; prefer `WANDB_MODE=offline` for long runs, then `wandb sync` afterwards.
 - NCCL: default P2P/IB transport fails on guppy; always export `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.
 
+## Server (golduck)
+
+- Host: `golduck.engin.umich.edu`
+- GPUs: 4× NVIDIA A100-SXM4-80GB (nvidia-smi index 0,1,2,4) + 1× "NVIDIA DGX Display" (index 3, 4 GB, **not usable for compute**).
+- CUDA enumerates by speed (FASTEST_FIRST), so the 4 A100s become cuda:0–3 and `+trainer.params.devices=4` uses all four A100s — **no need to manually exclude index 3**.
+- 80 GB VRAM → GPU VRAM is no longer the bottleneck (unlike guppy A6000). NCCL still needs `NCCL_P2P_DISABLE=1`, `NCCL_IB_DISABLE=1`.
+
 ## Data Paths
 
 | Purpose | Path |
@@ -28,7 +35,10 @@ alwaysApply: true
 | DrivoR root | `DrivoR/` |
 | Experiment output | `DrivoR/exp/` (`NAVSIM_EXP_ROOT`) |
 | OpenScene / NavSIM data | `navsim_dataset/` (`OPENSCENE_DATA_ROOT`) |
-| Precomputed BEV features | `navsim_bev_feature/exports_pretrained/{trainval,test}/**/*_decoder_neck.pt` |
+| Precomputed BEV features (v1) | `navsim_bev_feature/exports_pretrained/{trainval,test}/**/*_decoder_neck.pt` |
+| Precomputed BEV features (v2 navhard) | `navsim_bev_feature/exports_pretrained_navsim_v2/navhard_two_stage/`; `test` symlink → `exports_pretrained/test` |
+| NAVSIM v2 devkit (eval only) | `navsim/` (`NAVSIM_DEVKIT_ROOT`); conda env `navsim` |
+| v2 metric cache | `navsim/exp/navhard_two_stage_metric_cache/` |
 | Train metric cache | `DrivoR/exp/train_metric_cache/` |
 | Dataset cache (old, generic, currently used) | `DrivoR/exp/navsim_cache_nommcv_full` |
 | Dataset cache (training-matched, not tested) | `DrivoR/exp/navsim_cache_nommcv_same_as_training` |
@@ -43,6 +53,11 @@ alwaysApply: true
 - `area_pred=false` and `agent_pred=false` → `pred_ce_loss`, `pred_l1_loss`, `pred_area_loss` are always 0; this is expected.
 - LR uses sqrt scaling: `lr = base_lr * sqrt(global_batch / base_batch_size)` — no manual LR adjustment needed when changing batch.
 - Typical speed: 2GPU/16batch/8worker ≈ 5.8hr/epoch (with dataset cache); 85109 train samples, 18179 val samples.
+- BEV scorer structure config lives in `navsim/planning/script/config/common/agent/drivoR.yaml`:
+  - `scorer_bev: {lora_rank=8, lora_dropout, add_new_cross_attn=true, init_gate=0.0}`
+  - `bev_tokenizer: {patch_size=8, num_tokens=64, use_self_attn_block=false}`
+- Both the training and eval scripts expose env vars `SCORER_BEV_LORA_RANK` and `SCORER_BEV_INIT_GATE` (defaults 16 / 0.1) to override the yaml.
+- `cross_attn_bev_ls.gamma` (LayerScale, init = `init_gate`) gates how much BEV affects each scorer block; inspect it to verify BEV is actually used. With `init_gate=0.0` it trains to only |gamma|≈0.01–0.02 (BEV ≈ 1–2% of the residual), explaining marginal gains.
 
 ## Dataset Caching
 
@@ -84,9 +99,21 @@ alwaysApply: true
   - `val/score`: `on_step=True, on_epoch=True` → produces `val/score_epoch` for `ModelCheckpoint(monitor='val/score_epoch')`.
   - Other val metrics: `on_step=False, on_epoch=True` → original name, logged once per epoch.
 
+## NAVSIM v2 Evaluation (EPDMS)
+
+- v1 navtest PDMS: `DrivoR/scripts/evaluation/run_drivor_bev_evaluation.sh` (env `drivoR-share`).
+- v2 navhard_two_stage EPDMS: official `navsim/` repo → `run_pdm_score.py` + `scripts/evaluation/run_drivoR_pdm_score_v2.sh`; skill `drivor-navsim-v2-eval`.
+- Agent copy lives under `navsim/navsim/agents/drivoR/` with patches for `requires_scene`, `trajectory_sampling`, and BEV path fallback.
+- Eval Hydra: `agent.loss=null`, `num_epochs=1`, `batch_size=1`; quote checkpoint paths containing `=`.
+- v2 scorer weights: `noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`. Nav2 baseline EPDMS ≈ 0.483 on navhard.
+
 ## Don'ts
 
 - Do not use SimScale/synthetic scaling caches unless explicitly requested.
+- Do not run v2 EPDMS from DrivoR-only tree without the `navsim` clone and agent patches.
 - Do not use encoder-side BEV fusion; this is scorer-side injection only.
 - Do not trust `/media/T5/` or `/media/hdd2/` paths (these are from a previous machine).
 - Do not reuse a cache generated with different agent config — always regenerate with matching params.
+- Do not eval a checkpoint with structure params different from its training run — esp. `scorer_bev.lora_rank` (also `tf_d_model`, `ref_num`, `bev_channels`). Mismatch → `load_state_dict` LoRA `size mismatch`. `init_gate` does not affect shape (gamma is loaded from ckpt), but `lora_rank` must match.
+- Do not skip `agent.initialize()` in `run_training_full.py`: without it the baseline checkpoint is never loaded (random init + freeze). Correct load logs `Checkpoint loaded with strict=False ... expected_missing=113, unexpected_missing=0`.
+- When killing one of several training runs sharing GPUs, do NOT `pkill -f "<uid>"` (the executing shell's command line contains the uid and gets self-killed). Match `logger.id=<uid>` via `/proc/<pid>/cmdline` and kill by PID.

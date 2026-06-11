@@ -9,8 +9,11 @@
 | DrivoR 根目录 | `DrivoR/` |
 | 训练/实验输出 | `DrivoR/exp/`（`NAVSIM_EXP_ROOT`） |
 | OpenScene / NavSIM 数据 | `navsim_dataset/`（`OPENSCENE_DATA_ROOT`） |
-| BEV 导出 | `navsim_bev_feature/exports_pretrained/{trainval|test}/**/*_decoder_neck.pt` |
+| BEV 导出（v1 navtest/trainval） | `navsim_bev_feature/exports_pretrained/{trainval|test}/**/*_decoder_neck.pt` |
+| BEV 导出（v2 navhard） | `navsim_bev_feature/exports_pretrained_navsim_v2/navhard_two_stage/`；stage-one 回退用同目录下 `test` → `exports_pretrained/test` 符号链接 |
 | Train 用 metric cache | `DrivoR/exp/train_metric_cache/`（`*/*/metric_cache.pkl`） |
+| NAVSIM v2 官方 devkit | `/mnt/ws-frb/users/jingyuso/wenzhet/navsim`（与 `DrivoR/` 并列，勿混用入口脚本） |
+| v2 metric cache | `navsim/exp/navhard_two_stage_metric_cache/` |
 | BEV token 列表（训练 scene filter） | `DrivoR/exp/bev_feature_tokens/trainval_decoder_neck_tokens_full.txt` |
 
 ## Train metric caching
@@ -92,6 +95,44 @@
 - **修复**：用与训练完全相同的 agent config 重新生成 cache（`scripts/training/run_dataset_caching.sh`），存到独立路径 `exp/navsim_cache_nommcv_same_as_training`。
 - **关键参数必须匹配**：`long_trajectory_additional_poses`、`use_bev_feature`、`bev_feature_type`、`bev_channels`、`bev_features_root`、`bev_data_split`。
 
+### 9. Eval 报 LoRA `size mismatch`（train↔eval 结构不一致）
+
+- **现象**：`RuntimeError: Error(s) in loading state_dict for DrivoRAgent: size mismatch for _drivor_model.scorer_attention.layers.0.self_attn_lora.q_proj.weight: copying a param with shape torch.Size([16, 256]) ... current model is torch.Size([8, 256])`（所有 `*_lora` 层）。
+- **原因**：checkpoint 用 `scorer_bev.lora_rank=16` 训练，eval 时按 `drivoR.yaml` 默认 `lora_rank=8` 建模，LoRA 权重 shape 对不上。
+- **修复**：eval 命令补 `agent.config.scorer_bev.lora_rank=<训练时的值>`。已在 `scripts/evaluation/run_drivor_bev_evaluation.sh` 顶部用 env `SCORER_BEV_LORA_RANK`（默认 16）、`SCORER_BEV_INIT_GATE`（默认 0.1）参数化。
+- **通则**：任何改变张量 shape 的结构参数（`lora_rank`、`tf_d_model`、`ref_num`、`bev_channels`…）eval 必须与训练逐一对齐。`init_gate` 不影响 shape（gamma 由 ckpt 覆盖），但 `lora_rank` 必须一致。
+
+### 10. W&B `No API key configured` 导致 DDP 整体崩
+
+- **现象**：rank 0 抛 `wandb.errors.errors.UsageError: No API key configured. Use 'wandb login' to log in.`，其余 rank 紧接 `RuntimeError: Rank N successfully reached monitoredBarrier, but received errors while waiting for send/recv from rank 0`。
+- **原因**：online 模式下 rank 0 的 W&B 初始化失败（无 API key / DNS 不稳），其它 rank 在 barrier 处等不到 rank 0。崩溃**与 init_gate/lora_rank 等模型改动无关**。
+- **修复**：长跑用 `WANDB_MODE=offline`，结束后 `wandb sync <run dir>`；或先 `wandb login` 配好 key。
+
+### 11. BEV phase-1 分数极低 = 没加载 baseline checkpoint
+
+- **现象**：BEV finetune 总分显著低于 finetune 前；日志里**没有** `Checkpoint loaded with strict=False ...` 这行。
+- **原因**：`run_training_full.py` 实例化 agent 后未调用 `agent.initialize()`，`agent.checkpoint_path` 从未被加载 → 随机初始化主干再冻结，只训练 BEV/LoRA 新参数。
+- **修复**：在 instantiate agent 之后、创建 `AgentLightningModule` 之前调用 `agent.initialize()`。加载正确时日志出现 `Checkpoint loaded with strict=False. expected_missing=113, unexpected_missing=0, unexpected_keys=0`。
+
+## BEV Scorer 结构与诊断
+
+- **注入路径**：`BevTokenizer`（conv patchify → adaptive pool → learnable pos_embed → LayerNorm）把 `(B,256,128,128)` BEV 特征转成 `(B,64,256)` token，喂进 `BevAwareScorer` 的每个 `BevAwareBlock`。BEV-only 子层 `cross_attn_bev`（query=proposal embedding，kv=BEV token）通过 LayerScale `cross_attn_bev_ls.gamma` 门控加进 residual；`init_gate` 是 gamma 初值（0.0 = 起步恒等，完全不贡献）。
+- **代码位置**：`navsim/agents/drivoR/layers/bev_scorer_blocks.py`（`BevAwareBlock` / `BevAwareScorer`）、`navsim/agents/drivoR/layers/bev_tokenizer.py`、`navsim/agents/drivoR/drivor_model.py`（条件实例化）。`num_heads` 跟随 `refiner_num_heads`（当前=1，单头）。
+- **诊断 BEV 是否真被用**：加载 ckpt 打印各层 `scorer_attention.layers.*.cross_attn_bev_ls.gamma` 的统计量。实测 `init_gate=0.0` 训完每通道 |gamma| 仅 ~0.01–0.02（L2 0.2–0.4 / 256 维），BEV 仅贡献残差的 ~1–2%，解释了提升微弱（93.77 vs 93.69）。据此开了 `init_gate=0.1 + lora_rank=16` 的实验。
+- **改进方向（按性价比）**：
+  1. `init_gate>0`（如 0.1）+ 给 `cross_attn_bev` 单独多头（现 `refiner_num_heads=1`）+ 更大 `lora_rank`（8→16/32）。
+  2. tokenizer 增强：`use_self_attn_block=true`、`num_tokens` 提到 256（少做 avgpool 降采样）、用 2D sinusoidal pos embed。
+  3. 空间对齐注入：用 proposal waypoint 坐标在 BEV 上 grid_sample / deformable attention，取轨迹沿途证据（对 NOC/DAC/TTC 这类空间子分最相关）。
+  4. 选轨瓶颈：当前 `val/score_hit_rate≈0.05`、`lost_score≈0.04`，可加 listwise/ranking loss 直接优化"挑最优 proposal"。
+  5. phase-2：warmup 后解冻 `scorer_attention`（或整个 scorer）低 LR 微调。
+- **eval 注意**：确认 navtest 所有 token 都有对应 BEV `.pt`，缺失会走 `_empty_bev_tensor()` 零填充，稀释收益；建议统计缺失率。
+
+## 安全停掉指定训练 job
+
+- 多个 run 共享 GPU 时，**不要** `pkill -f "<uid>"`：执行该命令的 shell 自身命令行（echo/pgrep 里）含该 uid，会把自己一起杀掉，后半段还没跑完。
+- 正确做法：遍历 `pgrep -f run_training_full.py` 的 PID，读 `/proc/<pid>/cmdline` 匹配 `logger.id=<uid>` 再按 PID `kill -9`；并清掉对应的 launcher bash（匹配 experiment_name）。
+- 验证：`nvidia-smi` 每卡显存减半（如 ~14.8GB→~7.4GB）即说明冗余 job 已清、只剩一个 run。
+
 ## PL Metric Naming 规则速查
 
 | `on_step` | `on_epoch` | WandB 里的 key | 说明 |
@@ -116,6 +157,23 @@
 - **路径**：
   - 旧泛用 cache（schema 不一定匹配）：`exp/navsim_cache_nommcv_full`
   - 训练匹配 cache：`exp/navsim_cache_nommcv_same_as_training`
+
+## NAVSIM v2 评测（navhard_two_stage / EPDMS）
+
+- **不要用 DrivoR 自带的 v1 脚本评 v2**。v2 在官方仓库 `wenzhet/navsim` 里跑 `run_pdm_score.py`；DrivoR 里只有 v1 的 `run_pdm_score_multi_gpu.py`。
+- **Skill**：`.cursor/skills/drivor-navsim-v2-eval/SKILL.md`（环境、cache、BEV 路径、Hydra 覆盖、命令模板）。
+- **数据**：`navsim_dataset/navhard_two_stage/`（`sensor_blobs`、`synthetic_scene_pickles`）；需先下载（见 `DrivoR/download/download_navhard_two_stage.sh` 或 OpenScene）。
+- **环境**：`conda activate navsim` → `source navsim/setup_env.sh`（`NAVSIM_DEVKIT_ROOT`、`OPENSCENE_DATA_ROOT` 指向 `navsim` 与 `navsim_dataset`）。
+- **一次性 metric cache**：`navsim/scripts/evaluation/run_metric_caching_navhard.sh` → `navsim/exp/navhard_two_stage_metric_cache`。
+- **DrivoR agent**：仅复制到 `navsim/navsim/agents/drivoR/` + `drivoR.yaml`；并在 navsim 副本里打补丁：
+  - `requires_scene=True` + `trajectory_sampling` 传给 `AbstractAgent`；
+  - `compute_trajectory(..., scene)` 传入 `initial_token` / `log_name` 才能加载 BEV；
+  - `drivor_features.py` 在 `bev_data_split=navhard_two_stage` 时回退读 `exports_pretrained/test/`（stage-one 原帧）。
+- **Hydra 必带**：`agent.loss=null`、`agent.scheduler_args.num_epochs=1`、`agent.batch_size=1`；checkpoint 路径用引号（含 `=` 的文件名）。
+- **v2 打分权重**（与 v1 navtest 不同）：`noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`。
+- **参考分**：Nav2 `drivor_Nav2_10epochs.pth` 全量 navhard，EPDMS combined ≈ **0.483**（与 README 48.3 一致）。
+- **BEV scorer v2**：`bev_features_root=.../exports_pretrained_navsim_v2`、`bev_data_split=navhard_two_stage`、`scorer_bev.lora_rank=16`；launcher 见 `navsim/scripts/evaluation/run_drivoR_pdm_score_v2.sh` 与 `_run_full_bev_nav2.sh`。
+- **GPU**：golduck 用 `CUDA_VISIBLE_DEVICES=0,1,2,4`；guppy 单卡 sequential 约 1.5–2 h / 5912 scenarios。默认 `worker=sequential`（勿用默认 Ray CPU worker 评 DrivoR）。
 
 ## 建议命令速查
 
@@ -151,6 +209,32 @@ bash scripts/training/run_drivor_bev_phase1.sh \
 BATCH_SIZE=8 NUM_WORKERS=2 PREFETCH_FACTOR=1 \
 bash scripts/training/run_drivor_bev_phase1.sh \
   ./weights/checkpoints/drivor_Nav1_25epochs.pth finetune_drivor_bev_full_trainval 30
+
+# 长跑更稳：离线 W&B（避免 No API key / DNS 导致 DDP 崩），跑完再 wandb sync
+WANDB_MODE=offline \
+SCORER_BEV_INIT_GATE=0.1 SCORER_BEV_LORA_RANK=16 \
+bash scripts/training/run_drivor_bev_phase1.sh \
+  ./weights/checkpoints/drivor_Nav1_25epochs.pth golduck-4gpu-bev-gate0.1-rank16 30
+
+# 评估 BEV checkpoint（结构参数必须与训练一致，尤其 lora_rank！）
+# 默认 SCORER_BEV_LORA_RANK=16 / SCORER_BEV_INIT_GATE=0.1；评估旧 rank=8 ckpt 时覆盖即可
+SCORER_BEV_LORA_RANK=16 bash scripts/evaluation/run_drivor_bev_evaluation.sh
+
+# NAVSIM v2 EPDMS（在 navsim 仓库，非 DrivoR 根目录）
+cd /mnt/ws-frb/users/jingyuso/wenzhet/navsim && source setup_env.sh
+CHECKPOINT=/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/weights/checkpoints/drivor_Nav2_10epochs.pth \
+EXPERIMENT=drivoR_nav2_full bash scripts/evaluation/run_drivoR_pdm_score_v2.sh
+
+# 诊断 BEV 门控：打印各层 cross_attn_bev_ls.gamma 统计（判断 BEV 是否真在起作用）
+/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python - <<'PY'
+import torch, re
+ck = "exp/ke/<exp>/<uid>/checkpoints/best-....ckpt"
+sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd)
+li = lambda k: int(re.search(r"layers\.(\d+)\.", k).group(1))
+for k in sorted([x for x in sd if "cross_attn_bev_ls.gamma" in x], key=li):
+    g = sd[k].float()
+    print(f"layer {li(k)} meanabs={g.abs().mean():.5f} L2={g.norm():.4f} max|.|={g.abs().max():.4f}")
+PY
 ```
 
 ## 维护说明
