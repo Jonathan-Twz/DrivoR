@@ -227,6 +227,17 @@ class DrivoRAgent(AbstractAgent):
                             or rest.startswith("cross_attn_lora")
                             or rest.startswith("mlp_lora")
                         )
+                    if name.startswith("_drivor_model.trajectory_decoder.layers."):
+                        parts = name.split(".", 4)
+                        if len(parts) < 5:
+                            return False
+                        rest = parts[4]
+                        return (
+                            rest.startswith("cross_attn_bev")
+                            or rest.startswith("self_attn_lora")
+                            or rest.startswith("cross_attn_lora")
+                            or rest.startswith("mlp_lora")
+                        )
                     return False
 
                 expected = [k for k in missing if _is_expected_missing(k)]
@@ -352,6 +363,19 @@ class DrivoRAgent(AbstractAgent):
             if name.startswith("scorer_attention.layers."):
                 # Strip the "scorer_attention.layers.<i>." prefix to inspect the
                 # module name inside the BevAwareBlock.
+                parts = name.split(".", 3)
+                if len(parts) < 4:
+                    return False
+                rest = parts[3]
+                return (
+                    rest.startswith("cross_attn_bev")
+                    or rest.startswith("self_attn_lora")
+                    or rest.startswith("cross_attn_lora")
+                    or rest.startswith("mlp_lora")
+                )
+            if name.startswith("trajectory_decoder.layers."):
+                # New gated BEV cross-attn (+ optional side-LoRA) inside the
+                # trajectory generator.
                 parts = name.split(".", 3)
                 if len(parts) < 4:
                     return False

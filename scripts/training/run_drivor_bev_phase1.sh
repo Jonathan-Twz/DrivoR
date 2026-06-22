@@ -22,6 +22,10 @@ PYTHON_BIN="${PYTHON_BIN:-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-shar
 BEV_FEATURES_ROOT="${BEV_FEATURES_ROOT:-$WORKSPACE_ROOT/navsim_bev_feature/exports_pretrained}"
 
 export HYDRA_FULL_ERROR=1
+export PYTHONPATH="$DRIVOR_ROOT:$DRIVOR_ROOT/nuplan-devkit:${PYTHONPATH:-}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/drivor-matplotlib-$USER}"
+mkdir -p "$MPLCONFIGDIR"
 
 # ENV variables
 export NUPLAN_MAP_VERSION="${NUPLAN_MAP_VERSION:-nuplan-maps-v1.0}"
@@ -34,9 +38,11 @@ export NAVSIM_EXP_ROOT="${NAVSIM_EXP_ROOT:-$DRIVOR_ROOT/exp}"
 export SUBSCORE_PATH="$NAVSIM_EXP_ROOT" # TODO: not used?
 
 # Terminal input
-BASELINE_CKPT="${1:?Usage: $0 <baseline_checkpoint.(ckpt|pth)> [experiment_name] [max_epochs]}"
-EXPERIMENT="${2:-training_drivor_bev_scorer_phase1}"
-MAX_EPOCHS="${3:-10}"
+DEFAULT_BASELINE_CKPT="$DRIVOR_ROOT/weights/checkpoints/drivor_Nav1_25epochs.pth"
+USAGE="Usage: $0 [baseline_checkpoint.(ckpt|pth)] [experiment_name] [max_epochs]"
+BASELINE_CKPT="${1:-$DEFAULT_BASELINE_CKPT}"
+EXPERIMENT="${2:-Jun16-golduck-4gpu-lora16-0initgate-bev-decoder}"
+MAX_EPOCHS="${3:-30}"
 
 # Experiment variables
 EXPERIMENT_UID="${EXPERIMENT_UID:-$(date +%m.%d_%H.%M)}"
@@ -48,8 +54,13 @@ PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 BEV_DATA_SPLIT="${BEV_DATA_SPLIT:-trainval}"
 BEV_FEATURE_TYPE="${BEV_FEATURE_TYPE:-decoder_neck}"
 # BEV scorer cross-attn knobs (override defaults in agent/drivoR.yaml scorer_bev)
-SCORER_BEV_INIT_GATE="${SCORER_BEV_INIT_GATE:-0.1}"
+SCORER_BEV_INIT_GATE="${SCORER_BEV_INIT_GATE:-0.0}"
 SCORER_BEV_LORA_RANK="${SCORER_BEV_LORA_RANK:-16}"
+# BEV injection sites: scorer-side (original) and/or trajectory-decoder side
+USE_BEV_IN_SCORER="${USE_BEV_IN_SCORER:-false}"
+USE_BEV_IN_DECODER="${USE_BEV_IN_DECODER:-true}"
+DECODER_BEV_INIT_GATE="${DECODER_BEV_INIT_GATE:-0.0}"
+DECODER_BEV_LORA_RANK="${DECODER_BEV_LORA_RANK:-16}"
 TRAIN_TEST_SPLIT="${TRAIN_TEST_SPLIT:-navtrain}"
 SPLIT="${SPLIT:-trainval}"
 # BEV phase-1 freezes most weights; some trainable params may not appear in every step's loss graph.
@@ -67,7 +78,7 @@ FORCE_CACHE_COMPUTATION="${FORCE_CACHE_COMPUTATION:-false}"
 
 # W&B logging
 USE_WANDB="${USE_WANDB:-1}"
-WANDB_PROJECT="${WANDB_PROJECT:-drivor-bev-scorer}"
+WANDB_PROJECT="${WANDB_PROJECT:-drivor-bev-decoder}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
 WANDB_MODE="${WANDB_MODE:-online}"
 
@@ -124,7 +135,10 @@ echo "Data root   : $DATA_ROOT"
 echo "BEV root    : $BEV_FEATURES_ROOT"
 echo "BEV type    : $BEV_FEATURE_TYPE"
 echo "BEV init_gate: $SCORER_BEV_INIT_GATE  lora_rank: $SCORER_BEV_LORA_RANK"
+echo "BEV in scorer : $USE_BEV_IN_SCORER"
+echo "BEV in decoder: $USE_BEV_IN_DECODER (init_gate=$DECODER_BEV_INIT_GATE lora_rank=$DECODER_BEV_LORA_RANK)"
 echo "Python      : $PYTHON_BIN"
+echo "$USAGE"
 echo "Baseline ckpt: $BASELINE_CKPT"
 echo "Experiment   : $EXPERIMENT"
 echo "Experiment UID: $EXPERIMENT_UID"
@@ -232,6 +246,10 @@ PYTHONUNBUFFERED=1 \
   agent.config.bev_data_split="$BEV_DATA_SPLIT" \
   agent.config.scorer_bev.init_gate="$SCORER_BEV_INIT_GATE" \
   agent.config.scorer_bev.lora_rank="$SCORER_BEV_LORA_RANK" \
+  agent.config.use_bev_in_scorer="$USE_BEV_IN_SCORER" \
+  agent.config.use_bev_in_decoder="$USE_BEV_IN_DECODER" \
+  agent.config.decoder_bev.init_gate="$DECODER_BEV_INIT_GATE" \
+  agent.config.decoder_bev.lora_rank="$DECODER_BEV_LORA_RANK" \
   agent.config.refiner_ls_values=0.0 \
   agent.config.image_backbone.focus_front_cam=false \
   agent.config.one_token_per_traj=true \

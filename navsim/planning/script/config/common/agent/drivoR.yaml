@@ -95,8 +95,11 @@ config:
     interval_length: 0.5
 
   ####################
-  # Precomputed BEV features (optional extra input; injected only on scorer side)
+  # Precomputed BEV features (optional extra input)
   use_bev_feature: false
+  # Injection sites (both require use_bev_feature=true to take effect):
+  use_bev_in_scorer: true        # dual cross-attn + LoRA inside scorer_attention (original behavior)
+  use_bev_in_decoder: false      # gated BEV cross-attn inside the trajectory generator (no LoRA)
   bev_feature_type: decoder_neck # vtransform | decoder_neck  (file suffix)
   bev_channels: 256              # 80 for vtransform, 256 for decoder_neck
   bev_spatial_hw: [128, 128]
@@ -115,8 +118,14 @@ config:
     add_new_cross_attn: true      # add zero-init BEV cross-attention sublayer per scorer block
     init_gate: 0.0                # LayerScale init for the new BEV cross-attn (0.0 = identity at start)
 
+  decoder_bev:
+    init_gate: 0.0                # LayerScale init for the BEV cross-attn in the trajectory decoder
+    lora_rank: 0                  # side-LoRA rank on the frozen decoder sublayers; 0 = no LoRA
+    lora_dropout: 0.0
+
   # Phase-1 training switch: when true, optimizer only updates BEV tokenizer, side-LoRA and the
-  # new cross_attn_bev sublayers inside scorer_attention.  All other parameters are frozen.
+  # new cross_attn_bev sublayers inside scorer_attention and/or trajectory_decoder.
+  # All other parameters are frozen.
   freeze_pretrained_except_bev_scorer: false
   use_ray_score: true
 

@@ -9,7 +9,7 @@ alwaysApply: true
 
 - Always answer the user in Simplified Chinese unless they explicitly request otherwise.
 - This repo is DrivoR at `/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR`; avoid using WoTE scripts/configs accidentally.
-- The active conda env is `drivoR-share` (`/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share`).
+- Conda env: **`drivoR-share`** (Python 3.9, `/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share`) — used for **both training and evaluation** (v1 PDMS + v2 EPDMS).
 - `wandb 0.24.2` is installed in `drivoR-share`.
 
 ## Server (guppy)
@@ -37,7 +37,7 @@ alwaysApply: true
 | OpenScene / NavSIM data | `navsim_dataset/` (`OPENSCENE_DATA_ROOT`) |
 | Precomputed BEV features (v1) | `navsim_bev_feature/exports_pretrained/{trainval,test}/**/*_decoder_neck.pt` |
 | Precomputed BEV features (v2 navhard) | `navsim_bev_feature/exports_pretrained_navsim_v2/navhard_two_stage/`; `test` symlink → `exports_pretrained/test` |
-| NAVSIM v2 devkit (eval only) | `navsim/` (`NAVSIM_DEVKIT_ROOT`); conda env `navsim` |
+| NAVSIM v2 devkit (eval only) | `navsim/` (`NAVSIM_DEVKIT_ROOT`); same conda env `drivoR-share` |
 | v2 metric cache | `navsim/exp/navhard_two_stage_metric_cache/` |
 | Train metric cache | `DrivoR/exp/train_metric_cache/` |
 | Dataset cache (old, generic, currently used) | `DrivoR/exp/navsim_cache_nommcv_full` |
@@ -58,6 +58,24 @@ alwaysApply: true
   - `bev_tokenizer: {patch_size=8, num_tokens=64, use_self_attn_block=false}`
 - Both the training and eval scripts expose env vars `SCORER_BEV_LORA_RANK` and `SCORER_BEV_INIT_GATE` (defaults 16 / 0.1) to override the yaml.
 - `cross_attn_bev_ls.gamma` (LayerScale, init = `init_gate`) gates how much BEV affects each scorer block; inspect it to verify BEV is actually used. With `init_gate=0.0` it trains to only |gamma|≈0.01–0.02 (BEV ≈ 1–2% of the residual), explaining marginal gains.
+
+## BEV Decoder Phase-1 Training (trajectory generator)
+
+- Canonical architecture and maintenance specification:
+  `docs/architecture/bev-trajectory-decoder.md`. Read it before changing the
+  decoder, tokenizer, checkpoint whitelist, or decoder-BEV evaluation config.
+
+- Same launcher `scripts/training/run_drivor_bev_phase1.sh`; defaults now target **decoder-only** BEV:
+  - `USE_BEV_IN_SCORER=false`, `USE_BEV_IN_DECODER=true`
+  - `DECODER_BEV_INIT_GATE=0.0`, `DECODER_BEV_LORA_RANK=16`
+- Architecture: `BevAwareTrajectoryDecoder` in `navsim/agents/drivoR/layers/bev_decoder_blocks.py`
+  - Per block (sequential): `q += q_cam + gate * q_bev` via separate camera cross-attn then BEV cross-attn sublayer.
+  - Optional side-LoRA on frozen self-attn, camera cross-attn, and MLP when `decoder_bev.lora_rank > 0`.
+- Trainable (phase-1): `bev_tokenizer.*`, `trajectory_decoder.layers.*.cross_attn_bev*`, `trajectory_decoder.layers.*.*_lora.*`.
+- Frozen: entire backbone + original decoder weights + scorer (when `use_bev_in_scorer=false`).
+- Config keys in `drivoR.yaml`: `use_bev_in_scorer`, `use_bev_in_decoder`, `decoder_bev: {init_gate, lora_rank, lora_dropout}`.
+- Parity test: `scripts/training/test_drivor_bev_decoder_parity.py` (gate=0 lora=0 → bit-identical to `TransformerDecoder`).
+- Reference run: `exp/ke/Jun12-golduck-4gpu-lora16-bev-decoder/06.12_01.12/checkpoints/last.ckpt` (30 epochs, 4×A100).
 
 ## Dataset Caching
 
@@ -99,21 +117,42 @@ alwaysApply: true
   - `val/score`: `on_step=True, on_epoch=True` → produces `val/score_epoch` for `ModelCheckpoint(monitor='val/score_epoch')`.
   - Other val metrics: `on_step=False, on_epoch=True` → original name, logged once per epoch.
 
-## NAVSIM v2 Evaluation (EPDMS)
+## NAVSIM Evaluation (v1 PDMS / v2 EPDMS)
 
-- v1 navtest PDMS: `DrivoR/scripts/evaluation/run_drivor_bev_evaluation.sh` (env `drivoR-share`).
-- v2 navhard_two_stage EPDMS: official `navsim/` repo → `run_pdm_score.py` + `scripts/evaluation/run_drivoR_pdm_score_v2.sh`; skill `drivor-navsim-v2-eval`.
-- Agent copy lives under `navsim/navsim/agents/drivoR/` with patches for `requires_scene`, `trajectory_sampling`, and BEV path fallback.
-- Eval Hydra: `agent.loss=null`, `num_epochs=1`, `batch_size=1`; quote checkpoint paths containing `=`.
-- v2 scorer weights: `noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`. Nav2 baseline EPDMS ≈ 0.483 on navhard.
+- **v1 (navtest, open-loop PDMS)**: single-frame planning score. Env `drivoR-share`. Set `NAVSIM_DEVKIT_ROOT=DrivoR`.
+  - Scorer-BEV: `scripts/evaluation/run_drivor_bev_evaluation.sh`
+  - Decoder-BEV: `scripts/evaluation/run_drivor_bev_decoder_evaluation.sh` (`use_bev_in_decoder=true`, `decoder_bev.lora_rank=16`)
+- **v2 (navhard_two_stage, closed-loop EPDMS)**: two-stage reactive eval; one run yields **stage_one**, **stage_two**, and **combined** scores. Env `drivoR-share`. Set `NAVSIM_DEVKIT_ROOT=navsim`.
+  - Decoder-BEV: `navsim/scripts/evaluation/run_drivoR_pdm_score_v2_decoder_bev.sh`; skill `drivor-navsim-v2-eval`.
+  - Scorer-BEV: `navsim/scripts/evaluation/run_drivoR_pdm_score_v2.sh`
+- v2 requires decoder-BEV code synced into `navsim/navsim/agents/drivoR/` (`bev_decoder_blocks.py`, `drivor_model.py`, `drivoR.yaml`, agent whitelist).
+- **PYTHONPATH**: v2 scripts set `PYTHONPATH=$NAVSIM_DEVKIT_ROOT:...` because `drivoR-share` egg-link registers DrivoR's older `navsim` package (lacks `scene_aggregator`).
+- **Python 3.9 required for v2**: `drivoR-share` is now py3.9; older py3.8 breaks `nuplan-devkit` `StateIndex.STATE_SE2` → `IndexError` in scoring.
+- Eval Hydra: `agent.loss=null`, `num_epochs=1`, `batch_size=1`, `worker=sequential`; quote checkpoint paths containing `=`.
+- v2 metric weights: `noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`.
+- **Long v2 runs (~2.5 h, 5912 scenarios)**: use `setsid nohup bash ... > exp/v2_full_*.log 2>&1 &` — Cursor background terminals can kill child processes mid-run.
+- **`max_scenes` smoke**: inference may pass but aggregation fails (`Missing token in score_df`) because two-frame comfort needs full token chain; use full split for official score.
+
+### Reference scores (Jun 2026)
+
+| Model | Benchmark | Score |
+|-------|-----------|-------|
+| Nav2 baseline | v2 combined EPDMS | ≈ 0.483 |
+| Decoder-BEV LoRA16 (last.ckpt) | v1 PDMS | **0.9322** |
+| Decoder-BEV LoRA16 (last.ckpt) | v2 stage_one | **0.8413** |
+| Decoder-BEV LoRA16 (last.ckpt) | v2 stage_two | **0.5850** |
+| Decoder-BEV LoRA16 (last.ckpt) | v2 combined EPDMS | **0.4966** |
+
+v2 decoder-BEV bottleneck: stage_two `lane_keeping` ≈ 0.519 (stage_one ≈ 0.936).
 
 ## Don'ts
 
 - Do not use SimScale/synthetic scaling caches unless explicitly requested.
 - Do not run v2 EPDMS from DrivoR-only tree without the `navsim` clone and agent patches.
-- Do not use encoder-side BEV fusion; this is scorer-side injection only.
+- Do not use encoder-side BEV fusion; BEV injection is scorer-side and/or decoder-side cross-attention only (independent flags).
 - Do not trust `/media/T5/` or `/media/hdd2/` paths (these are from a previous machine).
 - Do not reuse a cache generated with different agent config — always regenerate with matching params.
-- Do not eval a checkpoint with structure params different from its training run — esp. `scorer_bev.lora_rank` (also `tf_d_model`, `ref_num`, `bev_channels`). Mismatch → `load_state_dict` LoRA `size mismatch`. `init_gate` does not affect shape (gamma is loaded from ckpt), but `lora_rank` must match.
+- Do not eval a checkpoint with structure params different from its training run — esp. `scorer_bev.lora_rank` or `decoder_bev.lora_rank` (also `tf_d_model`, `ref_num`, `bev_channels`). Mismatch → `load_state_dict` LoRA `size mismatch`. `init_gate` does not affect shape (gamma is loaded from ckpt), but `lora_rank` must match.
+- Do not run v1 eval with `NAVSIM_DEVKIT_ROOT=navsim` left over from v2 setup — v1 multi-GPU script lives in DrivoR tree.
 - Do not skip `agent.initialize()` in `run_training_full.py`: without it the baseline checkpoint is never loaded (random init + freeze). Correct load logs `Checkpoint loaded with strict=False ... expected_missing=113, unexpected_missing=0`.
 - When killing one of several training runs sharing GPUs, do NOT `pkill -f "<uid>"` (the executing shell's command line contains the uid and gets self-killed). Match `logger.id=<uid>` via `/proc/<pid>/cmdline` and kill by PID.

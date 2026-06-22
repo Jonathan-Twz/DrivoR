@@ -8,6 +8,7 @@ from .layers.image_encoder.dinov2_lora import ImgEncoder
 from .layers.utils.mlp import MLP
 from .layers.bev_tokenizer import BevTokenizer
 from .layers.bev_scorer_blocks import BevAwareScorer
+from .layers.bev_decoder_blocks import BevAwareTrajectoryDecoder
 from navsim.agents.drivoR.utils import pylogger
 log = pylogger.get_pylogger(__name__)
 import logging
@@ -81,12 +82,19 @@ class DrivoRModel(nn.Module):
             self.init_feature = nn.Embedding(self.poses_num * config.proposal_num, config.tf_d_model)
             traj_head_output_size =self.state_size
 
-        # trajectory decoder
-        self.trajectory_decoder = TransformerDecoder(proj_drop=0.1, drop_path=0.2, config=config)
-
-        # scorer decoder (BEV-aware when use_bev_feature is true)
+        # BEV injection switches (both require use_bev_feature for the input to exist)
         self._use_bev = bool(config.get("use_bev_feature", False))
-        if self._use_bev:
+        self._bev_in_scorer = self._use_bev and bool(config.get("use_bev_in_scorer", True))
+        self._bev_in_decoder = self._use_bev and bool(config.get("use_bev_in_decoder", False))
+
+        # trajectory decoder (BEV-aware when use_bev_in_decoder is true)
+        if self._bev_in_decoder:
+            self.trajectory_decoder = BevAwareTrajectoryDecoder(proj_drop=0.1, drop_path=0.2, config=config)
+        else:
+            self.trajectory_decoder = TransformerDecoder(proj_drop=0.1, drop_path=0.2, config=config)
+
+        # scorer decoder (BEV-aware when use_bev_in_scorer is true)
+        if self._bev_in_scorer:
             self.scorer_attention = BevAwareScorer(
                 num_layers=config.scorer_ref_num,
                 d_model=config.tf_d_model,
@@ -209,7 +217,10 @@ class DrivoRModel(nn.Module):
         log.debug(f"Proposals initial - {proposals.shape}")
 
         # decode the trajectories at each step of the decoder
-        token_list = self.trajectory_decoder(traj_tokens, scene_features)
+        if getattr(self, "_bev_in_decoder", False):
+            token_list = self.trajectory_decoder(traj_tokens, scene_features, bev_tokens)
+        else:
+            token_list = self.trajectory_decoder(traj_tokens, scene_features)
         log.debug(f"Trajectory decoder - {len(token_list)}")
         for i in range(self._config.ref_num):
             tokens = token_list[i]
@@ -228,7 +239,7 @@ class DrivoRModel(nn.Module):
         B,N,_,_=proposals.shape
 
         embedded_traj = self.pos_embed(proposals.reshape(B, N, -1).detach())  # (B, N, d_model)
-        if getattr(self, "_use_bev", False):
+        if getattr(self, "_bev_in_scorer", False):
             tr_out = self.scorer_attention(embedded_traj, scene_features, bev_tokens)  # (B, N, d_model)
         else:
             tr_out = self.scorer_attention(embedded_traj, scene_features)  # (B, N, d_model)

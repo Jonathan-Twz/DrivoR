@@ -163,7 +163,7 @@
 - **不要用 DrivoR 自带的 v1 脚本评 v2**。v2 在官方仓库 `wenzhet/navsim` 里跑 `run_pdm_score.py`；DrivoR 里只有 v1 的 `run_pdm_score_multi_gpu.py`。
 - **Skill**：`.cursor/skills/drivor-navsim-v2-eval/SKILL.md`（环境、cache、BEV 路径、Hydra 覆盖、命令模板）。
 - **数据**：`navsim_dataset/navhard_two_stage/`（`sensor_blobs`、`synthetic_scene_pickles`）；需先下载（见 `DrivoR/download/download_navhard_two_stage.sh` 或 OpenScene）。
-- **环境**：`conda activate navsim` → `source navsim/setup_env.sh`（`NAVSIM_DEVKIT_ROOT`、`OPENSCENE_DATA_ROOT` 指向 `navsim` 与 `navsim_dataset`）。
+- **环境**：`conda activate drivoR-share` → `source navsim/setup_env.sh`（`NAVSIM_DEVKIT_ROOT`、`OPENSCENE_DATA_ROOT` 指向 `navsim` 与 `navsim_dataset`）。
 - **一次性 metric cache**：`navsim/scripts/evaluation/run_metric_caching_navhard.sh` → `navsim/exp/navhard_two_stage_metric_cache`。
 - **DrivoR agent**：仅复制到 `navsim/navsim/agents/drivoR/` + `drivoR.yaml`；并在 navsim 副本里打补丁：
   - `requires_scene=True` + `trajectory_sampling` 传给 `AbstractAgent`；
