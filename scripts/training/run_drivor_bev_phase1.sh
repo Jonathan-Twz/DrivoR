@@ -61,6 +61,11 @@ USE_BEV_IN_SCORER="${USE_BEV_IN_SCORER:-false}"
 USE_BEV_IN_DECODER="${USE_BEV_IN_DECODER:-true}"
 DECODER_BEV_INIT_GATE="${DECODER_BEV_INIT_GATE:-0.0}"
 DECODER_BEV_LORA_RANK="${DECODER_BEV_LORA_RANK:-16}"
+USE_BEV_RESIDUAL_PROPOSAL_REFINER="${USE_BEV_RESIDUAL_PROPOSAL_REFINER:-false}"
+RESIDUAL_REFINER_NUM_LAYERS="${RESIDUAL_REFINER_NUM_LAYERS:-1}"
+RESIDUAL_REFINER_NUM_HEADS="${RESIDUAL_REFINER_NUM_HEADS:-1}"
+RESIDUAL_REFINER_INIT_ALPHA="${RESIDUAL_REFINER_INIT_ALPHA:-0.0}"
+RESIDUAL_REFINER_DROPOUT="${RESIDUAL_REFINER_DROPOUT:-0.0}"
 TRAIN_TEST_SPLIT="${TRAIN_TEST_SPLIT:-navtrain}"
 SPLIT="${SPLIT:-trainval}"
 # BEV phase-1 freezes most weights; some trainable params may not appear in every step's loss graph.
@@ -137,6 +142,7 @@ echo "BEV type    : $BEV_FEATURE_TYPE"
 echo "BEV init_gate: $SCORER_BEV_INIT_GATE  lora_rank: $SCORER_BEV_LORA_RANK"
 echo "BEV in scorer : $USE_BEV_IN_SCORER"
 echo "BEV in decoder: $USE_BEV_IN_DECODER (init_gate=$DECODER_BEV_INIT_GATE lora_rank=$DECODER_BEV_LORA_RANK)"
+echo "BEV residual refiner: $USE_BEV_RESIDUAL_PROPOSAL_REFINER (layers=$RESIDUAL_REFINER_NUM_LAYERS heads=$RESIDUAL_REFINER_NUM_HEADS alpha=$RESIDUAL_REFINER_INIT_ALPHA)"
 echo "Python      : $PYTHON_BIN"
 echo "$USAGE"
 echo "Baseline ckpt: $BASELINE_CKPT"
@@ -250,6 +256,11 @@ PYTHONUNBUFFERED=1 \
   agent.config.use_bev_in_decoder="$USE_BEV_IN_DECODER" \
   agent.config.decoder_bev.init_gate="$DECODER_BEV_INIT_GATE" \
   agent.config.decoder_bev.lora_rank="$DECODER_BEV_LORA_RANK" \
+  agent.config.use_bev_residual_proposal_refiner="$USE_BEV_RESIDUAL_PROPOSAL_REFINER" \
+  agent.config.bev_residual_proposal_refiner.num_layers="$RESIDUAL_REFINER_NUM_LAYERS" \
+  agent.config.bev_residual_proposal_refiner.num_heads="$RESIDUAL_REFINER_NUM_HEADS" \
+  agent.config.bev_residual_proposal_refiner.init_alpha="$RESIDUAL_REFINER_INIT_ALPHA" \
+  agent.config.bev_residual_proposal_refiner.dropout="$RESIDUAL_REFINER_DROPOUT" \
   agent.config.refiner_ls_values=0.0 \
   agent.config.image_backbone.focus_front_cam=false \
   agent.config.one_token_per_traj=true \

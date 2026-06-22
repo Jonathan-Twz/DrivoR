@@ -9,6 +9,7 @@ from .layers.utils.mlp import MLP
 from .layers.bev_tokenizer import BevTokenizer
 from .layers.bev_scorer_blocks import BevAwareScorer
 from .layers.bev_decoder_blocks import BevAwareTrajectoryDecoder
+from .layers.bev_residual_proposal_refiner import BevResidualProposalRefiner
 from navsim.agents.drivoR.utils import pylogger
 log = pylogger.get_pylogger(__name__)
 import logging
@@ -86,6 +87,9 @@ class DrivoRModel(nn.Module):
         self._use_bev = bool(config.get("use_bev_feature", False))
         self._bev_in_scorer = self._use_bev and bool(config.get("use_bev_in_scorer", True))
         self._bev_in_decoder = self._use_bev and bool(config.get("use_bev_in_decoder", False))
+        self._bev_residual_refiner = self._use_bev and bool(
+            config.get("use_bev_residual_proposal_refiner", False)
+        )
 
         # trajectory decoder (BEV-aware when use_bev_in_decoder is true)
         if self._bev_in_decoder:
@@ -116,6 +120,9 @@ class DrivoRModel(nn.Module):
                 nn.ReLU(),
                 nn.Linear(config.tf_d_ffn, config.tf_d_model),
             )
+
+        if self._bev_residual_refiner:
+            self.bev_residual_proposal_refiner = BevResidualProposalRefiner(config)
 
 
         # get the trajectory decoders
@@ -229,11 +236,24 @@ class DrivoRModel(nn.Module):
         
         traj_tokens = token_list[-1]
         proposals=proposal_list[-1]
+
+        if getattr(self, "_bev_residual_refiner", False):
+            base_proposals = proposals
+            path_queries = self.pos_embed(
+                base_proposals.reshape(base_proposals.shape[0], base_proposals.shape[1], -1).detach()
+            )
+            proposals, proposal_delta = self.bev_residual_proposal_refiner(
+                base_proposals, path_queries, bev_tokens
+            )
+            proposal_list.append(proposals)
+        else:
+            proposal_delta = None
         
 
         output={}
         output["proposals"] = proposals
         output["proposal_list"] = proposal_list
+        output["proposal_delta"] = proposal_delta
 
         # scoring
         B,N,_,_=proposals.shape
@@ -270,6 +290,5 @@ class DrivoRModel(nn.Module):
         output["pdm_score"] = pdm_score
 
         return output
-
 
 

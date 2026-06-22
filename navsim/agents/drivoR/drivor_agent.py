@@ -211,6 +211,7 @@ class DrivoRAgent(AbstractAgent):
                 logger = logging.getLogger(__name__)
                 expected_missing_prefixes = (
                     "_drivor_model.bev_tokenizer.",
+                    "_drivor_model.bev_residual_proposal_refiner.",
                 )
 
                 def _is_expected_missing(name: str) -> bool:
@@ -342,7 +343,11 @@ class DrivoRAgent(AbstractAgent):
             targets: Dict[str, torch.Tensor],
             pred: Dict[str, torch.Tensor],
     ) -> Dict:
-        return self.loss(targets, pred, self._config, self.compute_score)
+        loss_dict = self.loss(targets, pred, self._config, self.compute_score)
+        refiner = getattr(self._drivor_model, "bev_residual_proposal_refiner", None)
+        if refiner is not None and isinstance(loss_dict, dict):
+            loss_dict["residual_alpha"] = refiner.alpha.detach()
+        return loss_dict
 
     def _collect_trainable_params(self):
         """Select parameters for the optimizer.
@@ -359,6 +364,8 @@ class DrivoRAgent(AbstractAgent):
 
         def _is_trainable(name: str) -> bool:
             if name.startswith("bev_tokenizer."):
+                return True
+            if name.startswith("bev_residual_proposal_refiner."):
                 return True
             if name.startswith("scorer_attention.layers."):
                 # Strip the "scorer_attention.layers.<i>." prefix to inspect the
@@ -397,8 +404,8 @@ class DrivoRAgent(AbstractAgent):
         if not params:
             raise RuntimeError(
                 "freeze_pretrained_except_bev_scorer=True but no bev_tokenizer / "
-                "scorer_bev / side-LoRA parameters were found; make sure "
-                "use_bev_feature=True and the scorer was built as BevAwareScorer."
+                "BEV injection parameters were found; make sure use_bev_feature=True "
+                "and at least one BEV injection module is enabled."
             )
         import logging
 

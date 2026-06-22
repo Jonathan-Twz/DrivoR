@@ -77,6 +77,16 @@ alwaysApply: true
 - Parity test: `scripts/training/test_drivor_bev_decoder_parity.py` (gate=0 lora=0 → bit-identical to `TransformerDecoder`).
 - Reference run: `exp/ke/Jun12-golduck-4gpu-lora16-bev-decoder/06.12_01.12/checkpoints/last.ckpt` (30 epochs, 4×A100).
 
+## BEV Residual Proposal Refiner
+
+- Branch: `dev-bev-residual-proposal-refiner`.
+- Architecture registry: `docs/architecture/bev-injection-alternatives.md`.
+- Injection is post-decoder and pre-scorer; original DrivoR remains frozen.
+- Trainable: `bev_tokenizer.*` and `bev_residual_proposal_refiner.*`.
+- Default: one global path-query BEV cross-attention block and scalar
+  `alpha=0.0`, followed by an `(8, 3)` delta head for every proposal.
+- Launcher: `scripts/training/run_drivor_bev_residual_proposal_refiner.sh`.
+
 ## Dataset Caching
 
 - Script: `scripts/training/run_dataset_caching.sh` → calls `navsim/planning/script/run_dataset_caching.py`.
