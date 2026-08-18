@@ -10,6 +10,8 @@ Does a proposal-conditioned BEV rollout improve frozen DrivoR proposal refinemen
 - ResWorld first predicts an initial trajectory, conditions its residual latent world model on that trajectory, reconstructs a predicted future BEV by adding the residual to current BEV, and refines waypoints by attention into the predicted BEV. Source: `mengtan00/ResWorld`, `projects/mmdet3d_plugin/resworld/resworld_head.py`, lines 222-294.
 - This experiment ports the intersection of those mechanisms, not either full model: frozen DrivoR proposals -> candidate-conditioned BEV Transformer -> gated trajectory delta and gated scorer context.
 
+![Proposal-conditioned world-refinement architecture](../figures/idea0002_01/proposal_world_architecture.png)
+
 ## Controlled Variants
 
 | Variant | Future rollout | Proposal-conditioned | Trajectory refinement | Scorer context |
@@ -67,3 +69,9 @@ Fill from the paired W&B runs and local checkpoints.
 | Peak module memory (A100, batch 1) | pending | pending | pending |
 
 These small-subset results are a hypothesis screen, not official NAVSIM PDMS/EPDMS evidence. A positive result should be followed by a larger controlled run and official NAVSIM evaluation.
+
+After both W&B runs finish, generate the paired JSON/CSV summary and curves with:
+
+```bash
+python scripts/evaluation/collect_idea0002_01_results.py
+```
