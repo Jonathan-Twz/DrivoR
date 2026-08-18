@@ -496,7 +496,7 @@ class DrivoRAgent(AbstractAgent):
                 "poses": poses,
                 "test": test
             }
-            for token, poses in zip(targets["token"], proposals.cpu().numpy())
+            for token, poses in zip(targets["token"], proposals.float().cpu().numpy())
         ]
 
         if self.ray:
