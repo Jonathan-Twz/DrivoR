@@ -132,13 +132,13 @@ def write_epoch_csv(path: Path, records: Dict[str, Dict]) -> None:
 def plot_curves(path: Path, records: Dict[str, Dict]) -> None:
     colors = {"static_bev_refiner": "#3B82A0", "proposal_world": "#C65D3A"}
     panels = [
-        ("val/score_epoch", "Validation score", "Higher is better"),
-        ("val/l2", "Validation L2", "Lower is better"),
-        ("train/trajectory_loss", "Trajectory loss", "Epoch mean"),
-        ("train/proposal_world_refine_gate", "Residual gate", "Gate evolution"),
+        ("val/score_epoch", "Validation score"),
+        ("val/l2", "Validation L2"),
+        ("train/trajectory_loss", "Trajectory loss"),
+        ("train/proposal_world_refine_gate", "Residual gate"),
     ]
     fig, axes = plt.subplots(2, 2, figsize=(10, 7))
-    for axis, (metric, title, subtitle) in zip(axes.flat, panels):
+    for axis, (metric, title) in zip(axes.flat, panels):
         for label, record in records.items():
             points = [row for row in record["epochs"] if metric in row]
             if not points and metric == "train/proposal_world_refine_gate":
@@ -153,14 +153,26 @@ def plot_curves(path: Path, records: Dict[str, Dict]) -> None:
                     values,
                     marker="o",
                     linewidth=2,
+                    linestyle="--" if label == "proposal_world" else "-",
+                    markerfacecolor="white" if label == "proposal_world" else colors.get(label),
                     label=label.replace("_", " "),
                     color=colors.get(label),
                 )
         axis.set_title(title)
-        axis.text(0.0, 1.01, subtitle, transform=axis.transAxes, fontsize=8, color="#666666")
         axis.set_xlabel("Epoch")
         axis.grid(alpha=0.22)
         axis.spines[["top", "right"]].set_visible(False)
+        if metric == "train/proposal_world_refine_gate":
+            axis.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useOffset=False)
+            axis.set_ylabel("Gate value")
+        elif metric == "train/trajectory_loss":
+            axis.set_ylabel("Epoch mean")
+        elif metric == "val/score_epoch":
+            axis.set_ylabel("Higher is better")
+            axis.text(0.98, 0.06, "Curves overlap", ha="right", transform=axis.transAxes, fontsize=8, color="#666666")
+        elif metric == "val/l2":
+            axis.set_ylabel("Lower is better")
+            axis.text(0.98, 0.06, "Curves overlap", ha="right", transform=axis.transAxes, fontsize=8, color="#666666")
     axes[0, 0].legend(frameon=False)
     fig.suptitle("idea_0002_01 Matched Small-Data Validation", fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.96))

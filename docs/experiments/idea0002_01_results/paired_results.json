@@ -1,0 +1,116 @@
+{
+  "proposal_world": {
+    "best_epoch": 0,
+    "best_val_score": 0.952298641204834,
+    "config": {},
+    "created_at": null,
+    "epochs": [
+      {
+        "epoch": 0,
+        "train/loss_epoch": 1.437449468571409,
+        "train/proposal_world_refine_gate": -1.078817167435124e-08,
+        "train/proposal_world_score_gate": -1.9208318666435846e-08,
+        "train/trajectory_loss": 0.5408590898963141,
+        "val/l2": 0.43618377079610604,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 1,
+        "train/loss_epoch": 1.4948667335139476,
+        "train/proposal_world_refine_gate": 2.121813681144058e-07,
+        "train/proposal_world_score_gate": -3.3209767646980026e-07,
+        "train/trajectory_loss": 0.6526133208285386,
+        "val/l2": 0.4361837707962282,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 2,
+        "train/loss_epoch": 1.3960218071241184,
+        "train/proposal_world_refine_gate": 7.15610207535633e-07,
+        "train/proposal_world_score_gate": -8.697224949116844e-07,
+        "train/trajectory_loss": 0.6007447200626744,
+        "val/l2": 0.4358597676976157,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 3,
+        "train/loss_epoch": 1.4369139062335943,
+        "train/proposal_world_refine_gate": 1.2291205706560504e-06,
+        "train/proposal_world_score_gate": -1.8218373085687745e-06,
+        "train/trajectory_loss": 0.5061547334400754,
+        "val/l2": 0.43585976770370805,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      }
+    ],
+    "id": null,
+    "label": "proposal_world",
+    "name": "08.18_purrgil_final_pair2",
+    "source_csv": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/ke/Aug18-idea0002-01-proposal-world-fast/08.18_purrgil_final_pair2/csv_logs/version_0/metrics.csv",
+    "state": "local",
+    "summary": {},
+    "url": null
+  },
+  "static_bev_refiner": {
+    "best_epoch": 0,
+    "best_val_score": 0.952298641204834,
+    "config": {},
+    "created_at": null,
+    "epochs": [
+      {
+        "epoch": 0,
+        "train/loss_epoch": 1.3638870853576643,
+        "train/residual_alpha": -7.000510174239721e-08,
+        "train/trajectory_loss": 0.5385817277209498,
+        "val/l2": 0.43618377079604603,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 1,
+        "train/loss_epoch": 1.512945695167846,
+        "train/residual_alpha": -4.153082997504498e-07,
+        "train/trajectory_loss": 0.5379488863940125,
+        "val/l2": 0.4361837707959868,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 2,
+        "train/loss_epoch": 1.579531336691557,
+        "train/residual_alpha": -1.1552338747833346e-06,
+        "train/trajectory_loss": 0.6548304776176428,
+        "val/l2": 0.4358597689201984,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      },
+      {
+        "epoch": 3,
+        "train/loss_epoch": 1.4477401129404384,
+        "train/residual_alpha": -2.3523818555304388e-06,
+        "train/trajectory_loss": 0.6200754018789443,
+        "val/l2": 0.4358597691676482,
+        "val/score_epoch": 0.952298641204834,
+        "val/score_hit_rate": 0.09375,
+        "val/top_5_score_hit_rate": 0.359375
+      }
+    ],
+    "id": null,
+    "label": "static_bev_refiner",
+    "name": "08.18_purrgil_final_pair2",
+    "source_csv": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/ke/Aug18-idea0002-01-static-bev-refiner-fast/08.18_purrgil_final_pair2/csv_logs/version_0/metrics.csv",
+    "state": "local",
+    "summary": {},
+    "url": null
+  }
+}

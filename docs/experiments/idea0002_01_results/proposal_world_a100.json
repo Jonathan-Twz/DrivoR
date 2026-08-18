@@ -1,0 +1,31 @@
+{
+  "batch": 1,
+  "bev_token_count": 64,
+  "chunk_size": 8,
+  "context_norm": 15.99085807800293,
+  "delta_shape": [
+    1,
+    64,
+    8,
+    3
+  ],
+  "device": "cuda",
+  "max_latency_ms": 31.947672367095947,
+  "mean_latency_ms": 9.6617491543293,
+  "median_latency_ms": 8.647697046399117,
+  "parameters": 1874970,
+  "peak_cuda_memory_mb": 21.109375,
+  "proposal_count": 64,
+  "refined_shape": [
+    1,
+    64,
+    8,
+    3
+  ],
+  "score_residual_shape": [
+    1,
+    64,
+    256
+  ],
+  "variant": "proposal_world"
+}

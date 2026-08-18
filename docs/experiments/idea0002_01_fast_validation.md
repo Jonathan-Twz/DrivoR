@@ -32,7 +32,7 @@ Both variants load the same pretrained checkpoint and freeze the original encode
 - Batch: 4/GPU, gradient accumulation 4, bf16 mixed precision
 - Optimizer and LR: AdamW, configured base LR `1e-4`; effective LR is `2.5e-5` for batch 4 under the repository's square-root batch scaling
 - Seed: 2
-- W&B project: `drivor-world-model-fast-validation`
+- Metric logging: local Lightning CSV at every optimizer step; purrgil W&B is available for explicit post-hoc upload
 
 The fixed token file is generated at `exp/idea0002_fast/fixed_tokens_seed2_n2048.txt`; its adjacent JSON manifest records source and output hashes.
 
@@ -55,23 +55,45 @@ Module-only capacity is closely matched: 1,868,825 parameters for the static BEV
 
 ## Results
 
-Fill from the paired W&B runs and local checkpoints.
+Both runs used commit `c47afe7`, started from the same pretrained checkpoint with automatic resume disabled, and completed 4 epochs / 64 optimizer steps. Run UID: `08.18_purrgil_final_pair2`.
+
+- Static output: `exp/ke/Aug18-idea0002-01-static-bev-refiner-fast/08.18_purrgil_final_pair2`
+- Proposal-world output: `exp/ke/Aug18-idea0002-01-proposal-world-fast/08.18_purrgil_final_pair2`
+- CPU cold start on purrgil: approximately 4.5 minutes per process.
+- Cache-only subset discovery: 1.01 seconds (static) and 0.68 seconds (proposal world).
+- Exact split: 1,722 train and 326 validation samples for both runs.
 
 | Metric | Static BEV refiner | Proposal world | Delta |
 |---|---:|---:|---:|
-| Best `val/score_epoch` | pending | pending | pending |
-| Final `val/score_epoch` | pending | pending | pending |
-| Final `val/l2` | pending | pending | pending |
-| Final `train/trajectory_loss` | pending | pending | pending |
-| Refine gate | pending | pending | n/a |
-| Score gate | n/a | pending | n/a |
-| Mean module latency (A100, batch 1) | pending | pending | pending |
-| Peak module memory (A100, batch 1) | pending | pending | pending |
+| Best `val/score_epoch` | 0.952299 | 0.952299 | 0.000000 |
+| Final `val/score_epoch` | 0.952299 | 0.952299 | 0.000000 |
+| Final `val/l2` | 0.4358597692 | 0.4358597677 | -1.46e-9 |
+| Final `val/score_hit_rate` | 0.09375 | 0.09375 | 0.00000 |
+| Final `val/top_5_score_hit_rate` | 0.359375 | 0.359375 | 0.000000 |
+| Final `train/trajectory_loss` | 0.620075 | 0.506155 | -0.113921 |
+| Final checkpoint refine gate | -3.00e-6 | 1.63e-6 | n/a |
+| Final checkpoint score gate | n/a | -2.68e-6 | n/a |
+| Mean module latency (A100, batch 1) | 0.971 ms | 9.662 ms | 9.95x |
+| Peak module memory (A100, batch 1) | 16.90 MB | 21.11 MB | +24.9% |
+
+![Matched training curves](../figures/idea0002_01/training_curves.png)
+
+Raw paired results and A100 benchmark JSON files are in `docs/experiments/idea0002_01_results/`.
+
+## Interpretation
+
+The proposal-conditioned world model did not improve planning behavior under this strict zero-gate, 64-step screen. Validation score, L2, score-hit rate, and top-5 hit rate overlap at plotting precision for every epoch. The lower final proposal-world training trajectory loss is not evidence of better planning because it is noisy across epochs and does not transfer to any validation metric.
+
+The decisive diagnostic is gate magnitude. The static alpha reached only `-3.00e-6`; proposal-world refine and score gates reached `1.63e-6` and `-2.68e-6`. Therefore both residual paths remained effectively disabled, preserving pretrained behavior and starving the deeper residual modules of useful gradients for most of this short run. The current result rejects the training configuration, not the architectural hypothesis.
+
+The proposal-world module is parameter-matched but costs about 9.95x the isolated A100 latency of direct static-BEV refinement. A follow-up is justified only if a matched small nonzero gate initialization (for example `0.01` for both variants) produces a validation separation on the same fixed subset. If it does not, idea 0002-01 should be deprioritized before official PDMS evaluation.
 
 These small-subset results are a hypothesis screen, not official NAVSIM PDMS/EPDMS evidence. A positive result should be followed by a larger controlled run and official NAVSIM evaluation.
 
-After both W&B runs finish, generate the paired JSON/CSV summary and curves with:
+Regenerate the paired JSON/CSV summary and curves with:
 
 ```bash
-python scripts/evaluation/collect_idea0002_01_results.py
+python scripts/evaluation/collect_idea0002_01_results.py \
+  --static-csv /path/to/static/csv_logs/version_0/metrics.csv \
+  --world-csv /path/to/world/csv_logs/version_0/metrics.csv
 ```
