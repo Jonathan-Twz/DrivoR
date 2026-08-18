@@ -124,6 +124,11 @@ if [[ "$USE_WANDB" == "1" ]]; then
   LOGGER_OVERRIDES+=(+trainer.params.logger.name="$EXPERIMENT/$EXPERIMENT_UID")
   LOGGER_OVERRIDES+=(+trainer.params.logger.save_dir="$OUTPUT_DIR")
   LOGGER_OVERRIDES+=(+trainer.params.logger.offline=false)
+else
+  LOGGER_OVERRIDES+=(+trainer.params.logger._target_=pytorch_lightning.loggers.CSVLogger)
+  LOGGER_OVERRIDES+=(+trainer.params.logger.save_dir="$OUTPUT_DIR")
+  LOGGER_OVERRIDES+=(+trainer.params.logger.name=csv_logs)
+  LOGGER_OVERRIDES+=(+trainer.params.logger.version=0)
 fi
 
 "$PYTHON_BIN" -u "$NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_training_full.py" \
