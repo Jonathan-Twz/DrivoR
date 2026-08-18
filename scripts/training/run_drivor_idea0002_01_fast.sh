@@ -133,7 +133,7 @@ fi
   train_test_split=navtrain \
   split=trainval \
   cache_path="$CACHE_PATH" \
-  use_cache_without_dataset=false \
+  use_cache_without_dataset=true \
   force_cache_computation=false \
   +scene_filter_token_file="$FIXED_TOKEN_FILE" \
   trainer.params.max_epochs="$MAX_EPOCHS" \

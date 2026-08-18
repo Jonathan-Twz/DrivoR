@@ -37,6 +37,7 @@ class CacheOnlyDataset(torch.utils.data.Dataset):
         feature_builders: List[AbstractFeatureBuilder],
         target_builders: List[AbstractTargetBuilder],
         log_names: Optional[List[str]] = None,
+        tokens: Optional[List[str]] = None,
     ):
         """
         Initializes the dataset module.
@@ -44,6 +45,7 @@ class CacheOnlyDataset(torch.utils.data.Dataset):
         :param feature_builders: list of feature builders
         :param target_builders: list of target builders
         :param log_names: optional list of log folder to consider, defaults to None
+        :param tokens: optional scene-token allowlist, defaults to None
         """
         super().__init__()
         assert Path(cache_path).is_dir(), f"Cache path {cache_path} does not exist!"
@@ -61,6 +63,7 @@ class CacheOnlyDataset(torch.utils.data.Dataset):
             feature_builders=self._feature_builders,
             target_builders=self._target_builders,
             log_names=self.log_names,
+            tokens=tokens,
         )
         self.tokens = list(self._valid_cache_paths.keys())
 
@@ -84,6 +87,7 @@ class CacheOnlyDataset(torch.utils.data.Dataset):
         feature_builders: List[AbstractFeatureBuilder],
         target_builders: List[AbstractTargetBuilder],
         log_names: List[Path],
+        tokens: Optional[List[str]] = None,
     ) -> Dict[str, Path]:
         """
         Helper method to load valid cache paths.
@@ -91,20 +95,27 @@ class CacheOnlyDataset(torch.utils.data.Dataset):
         :param feature_builders: list of feature builders
         :param target_builders: list of target builders
         :param log_names: list of log paths to load
+        :param tokens: optional scene-token allowlist
         :return: dictionary of tokens and sample paths as keys / values
         """
 
         valid_cache_paths: Dict[str, Path] = {}
+        token_filter = set(tokens) if tokens is not None else None
 
         for log_name in tqdm(log_names, desc="Loading Valid Caches"):
             log_path = cache_path / log_name
             for token_path in log_path.iterdir():
+                if token_filter is not None and token_path.name not in token_filter:
+                    continue
                 # found_caches: List[bool] = []
                 # for builder in feature_builders + target_builders:
                 #     data_dict_path = token_path / (builder.get_unique_name() + ".gz")
                 #     found_caches.append(data_dict_path.is_file())
                 # if all(found_caches):
                 valid_cache_paths[token_path.name] = token_path
+
+            if token_filter is not None and len(valid_cache_paths) == len(token_filter):
+                break
 
         return valid_cache_paths
 

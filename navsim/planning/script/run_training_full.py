@@ -154,17 +154,23 @@ def main(cfg: DictConfig) -> None:
         assert (
             cfg.cache_path is not None
         ), "cache_path must be provided when using cached data without building SceneLoader"
+        token_file = cfg.get("scene_filter_token_file", None)
+        selected_tokens = _load_token_filter(token_file) if token_file else None
+        if selected_tokens is not None:
+            logger.info("Restricting cache-only datasets to %d scene tokens from %s", len(selected_tokens), token_file)
         train_data = CacheOnlyDataset(
             cache_path=cfg.cache_path,
             feature_builders=agent.get_feature_builders(),
             target_builders=agent.get_target_builders(),
             log_names=cfg.train_logs,
+            tokens=selected_tokens,
         )
         val_data = CacheOnlyDataset(
             cache_path=cfg.cache_path,
             feature_builders=agent.get_feature_builders(),
             target_builders=agent.get_target_builders(),
             log_names=cfg.val_logs,
+            tokens=selected_tokens,
         )
     else:
         logger.info("Building SceneLoader")
