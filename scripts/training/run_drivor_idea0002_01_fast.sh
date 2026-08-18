@@ -60,6 +60,7 @@ MAX_EPOCHS="${MAX_EPOCHS:-4}"
 LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-64}"
 LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-16}"
 ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-4}"
+LOG_EVERY_N_STEPS="${LOG_EVERY_N_STEPS:-1}"
 BASE_LR="${BASE_LR:-1e-4}"
 WANDB_PROJECT="${WANDB_PROJECT:-drivor-world-model-fast-validation}"
 USE_WANDB="${USE_WANDB:-1}"
@@ -148,6 +149,7 @@ fi
   trainer.params.limit_train_batches="$LIMIT_TRAIN_BATCHES" \
   trainer.params.limit_val_batches="$LIMIT_VAL_BATCHES" \
   trainer.params.accumulate_grad_batches="$ACCUMULATE_GRAD_BATCHES" \
+  trainer.params.log_every_n_steps="$LOG_EVERY_N_STEPS" \
   dataloader.params.batch_size="$BATCH_SIZE" \
   dataloader.params.num_workers="$NUM_WORKERS" \
   dataloader.params.prefetch_factor="$PREFETCH_FACTOR" \
