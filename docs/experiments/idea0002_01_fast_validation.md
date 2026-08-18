@@ -80,6 +80,20 @@ Both runs used commit `c47afe7`, started from the same pretrained checkpoint wit
 
 Raw paired results and A100 benchmark JSON files are in `docs/experiments/idea0002_01_results/`.
 
+## Latent Rollout Visualization
+
+The final proposal-world checkpoint (`best-epoch=3-step=64.ckpt`) was inspected on validation scene `d973628ca1235533`. The model produces one 8x8 latent future-BEV token grid per proposal. The figures use a shared PCA projection for comparable latent colors and RMS feature differences; these are not semantic occupancy classes.
+
+![Selected proposal-conditioned rollouts](../figures/idea0002_01/rollouts/d973628ca1235533_selected_rollouts.png)
+
+![All 64 proposal-specific rollout deviations](../figures/idea0002_01/rollouts/d973628ca1235533_all64_rollouts.png)
+
+- Mean current-to-future latent RMS: `0.569474`
+- Mean pairwise RMS across candidate futures: `0.005400`
+- Refine gate: `1.6268e-6`; score gate: `-2.6762e-6`
+
+The Transformer applies a substantial shared transformation to the current BEV, but its proposal-specific variation is about two orders of magnitude smaller. This indicates weak action conditioning in addition to the nearly closed output gates. Regenerate the plots with `scripts/viz/plot_proposal_world_rollouts.py`.
+
 ## Interpretation
 
 The proposal-conditioned world model did not improve planning behavior under this strict zero-gate, 64-step screen. Validation score, L2, score-hit rate, and top-5 hit rate overlap at plotting precision for every epoch. The lower final proposal-world training trajectory loss is not evidence of better planning because it is noisy across epochs and does not transfer to any validation metric.
