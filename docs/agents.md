@@ -60,6 +60,7 @@ Depending on whether you want to use a learning-rate scheduler or not, this func
 
 - `get_training_callbacks()`
 In this function, you can return a List of `pl.Callback` to monitor or visualize the training process of the learned model. We implemented a callback for TransFuser in `navsim.agents.transfuser.transfuser_callback.TransfuserCallback`, which can serve as a starting point.
+For DrivoR, `get_training_callbacks()` keeps the five checkpoints with the highest `val/score_epoch` (`save_top_k=5`, `mode="max"`) and also writes `last.ckpt`. Evaluate multiple retained best checkpoints on NavSim v1/v2 because `val/score_epoch` is a proxy and may not rank checkpoints by PDMS/EPDMS. In-training NAVSIM-v1 PDMS evaluation is disabled by default; `DRIVOR_EPOCH_PDMS_EVAL=1` is an opt-in debugging path and does not change checkpoint ranking.
 
 - `compute_trajectory()`
 In contrast to the non-learning-based Agent, you don't have to implement this function.
@@ -105,5 +106,3 @@ Link to the [implementation](https://github.com/autonomousvision/navsim/blob/mai
 In NAVSIM, we implement the Transfuser backbone from [CARLA Garage](https://github.com/autonomousvision/carla_garage) and use BEV semantic segmentation and DETR-style bounding-box detection as auxiliary tasks. To facilitate the wide-angle camera view of the Transfuser, we stitch patches of the three front-facing cameras. Transfuser is a good starting point for sensor agents and provides pre-processing for image and LiDAR sensors, training visualizations with callbacks, and more advanced loss functions (i.e., Hungarian matching for detection). 
 
 Link to the [implementation](https://github.com/autonomousvision/navsim/blob/main/navsim/agents/transfuser).
-
-

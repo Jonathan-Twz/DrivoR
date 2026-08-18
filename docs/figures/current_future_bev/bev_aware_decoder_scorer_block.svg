@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="980" viewBox="0 0 1700 980" role="img" aria-labelledby="title desc">
+  <title id="title">BEV-Aware Decoder and Scorer Transformer Block</title>
+  <desc id="desc">Academic block diagram of the repeated BEV-aware transformer block used in both the trajectory decoder and scorer, with frozen original layers, side-LoRA adapters, and a gated BEV cross-attention branch.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#223044"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#bf5a16"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 31px; font-weight: 700; fill: #172033; letter-spacing: 0; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 16px; fill: #4d5a6c; letter-spacing: 0; }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 700; fill: #182233; letter-spacing: 0; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 14px; fill: #4b5668; letter-spacing: 0; }
+      .tiny { font-family: Arial, Helvetica, sans-serif; font-size: 12px; fill: #596579; letter-spacing: 0; }
+      .math { font-family: Arial, Helvetica, sans-serif; font-size: 15px; fill: #263247; letter-spacing: 0; }
+      .panel { fill: #f7f9fc; stroke: #cbd5e2; stroke-width: 1.6; rx: 8; }
+      .frozen { fill: #edf2f7; stroke: #9aa9bc; stroke-width: 1.6; rx: 8; }
+      .train { fill: #fff2dc; stroke: #d07a2e; stroke-width: 1.8; rx: 8; }
+      .bev { fill: #eef9f4; stroke: #4fa785; stroke-width: 1.8; rx: 8; }
+      .sum { fill: #ffffff; stroke: #657386; stroke-width: 1.5; }
+      .arrow { fill: none; stroke: #223044; stroke-width: 2.2; marker-end: url(#arrow); }
+      .arrow-muted { fill: none; stroke: #8b96a7; stroke-width: 1.6; marker-end: url(#arrow); }
+      .arrow-orange { fill: none; stroke: #bf5a16; stroke-width: 2.2; marker-end: url(#arrow-orange); }
+      .dash { stroke-dasharray: 7 6; }
+      .legend { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #273246; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1700" height="980"/>
+  <text class="title" x="70" y="58">BEV-Aware Transformer Block Shared by Decoder and Scorer</text>
+  <text class="subtitle" x="70" y="87">The original DrivoR residual path is preserved; new BEV and side-LoRA branches are zero/gate initialized for stable co-tuning.</text>
+
+  <rect class="panel" x="58" y="128" width="1584" height="720"/>
+
+  <rect class="frozen" x="90" y="208" width="190" height="82"/>
+  <text class="label" x="130" y="240">Input tokens</text>
+  <text class="small" x="128" y="265">x</text>
+
+  <rect class="frozen" x="346" y="172" width="250" height="110"/>
+  <text class="label" x="386" y="205">Self-attention</text>
+  <text class="small" x="386" y="230">original layer, frozen</text>
+  <text class="tiny" x="386" y="252">LayerNorm -> MHA -> LayerScale</text>
+
+  <rect class="train" x="346" y="318" width="250" height="90"/>
+  <text class="label" x="382" y="351">Side-LoRA self</text>
+  <text class="small" x="382" y="376">rank=16, zero output init</text>
+
+  <circle class="sum" cx="650" cy="249" r="18"/>
+  <text class="label" x="642" y="256">+</text>
+
+  <rect class="frozen" x="714" y="172" width="268" height="110"/>
+  <text class="label" x="746" y="205">Scene cross-attn</text>
+  <text class="small" x="746" y="230">query=x, key/value=scene tokens</text>
+  <text class="tiny" x="746" y="252">original layer, frozen</text>
+
+  <rect class="train" x="714" y="318" width="268" height="90"/>
+  <text class="label" x="750" y="351">Side-LoRA scene</text>
+  <text class="small" x="750" y="376">low-rank cross-attn adapter</text>
+
+  <circle class="sum" cx="1038" cy="249" r="18"/>
+  <text class="label" x="1030" y="256">+</text>
+
+  <rect class="bev" x="1108" y="154" width="286" height="132"/>
+  <text class="label" x="1142" y="188">BEV cross-attn</text>
+  <text class="small" x="1142" y="214">query=x, key/value=selected BEV</text>
+  <text class="small" x="1142" y="238">new trainable branch</text>
+  <text class="tiny" x="1142" y="262">LayerScale gate gamma init=0.0</text>
+
+  <circle class="sum" cx="1450" cy="249" r="18"/>
+  <text class="label" x="1442" y="256">+</text>
+
+  <rect class="frozen" x="1108" y="470" width="286" height="106"/>
+  <text class="label" x="1168" y="503">MLP</text>
+  <text class="small" x="1168" y="528">original feed-forward layer</text>
+  <text class="tiny" x="1168" y="550">frozen pretrained weights</text>
+
+  <rect class="train" x="1108" y="614" width="286" height="90"/>
+  <text class="label" x="1152" y="647">Side-LoRA MLP</text>
+  <text class="small" x="1152" y="672">low-rank residual MLP</text>
+
+  <circle class="sum" cx="1450" cy="523" r="18"/>
+  <text class="label" x="1442" y="530">+</text>
+
+  <rect class="frozen" x="1498" y="482" width="112" height="82"/>
+  <text class="label" x="1520" y="514">Output</text>
+  <text class="small" x="1528" y="538">x'</text>
+
+  <rect class="frozen" x="720" y="54" width="256" height="56"/>
+  <text class="label" x="756" y="88">Scene tokens</text>
+
+  <rect class="bev" x="1122" y="54" width="258" height="56"/>
+  <text class="label" x="1150" y="88">Selected BEV tokens</text>
+
+  <path class="arrow" d="M 280 249 L 346 249"/>
+  <path class="arrow" d="M 596 227 C 620 227, 626 249, 632 249"/>
+  <path class="arrow-orange" d="M 596 363 C 626 363, 630 270, 632 258"/>
+  <path class="arrow" d="M 668 249 L 714 249"/>
+  <path class="arrow" d="M 982 227 C 1011 227, 1018 249, 1020 249"/>
+  <path class="arrow-orange" d="M 982 363 C 1016 363, 1020 270, 1021 258"/>
+  <path class="arrow" d="M 1056 249 L 1108 249"/>
+  <path class="arrow-orange" d="M 1394 220 C 1422 220, 1428 249, 1432 249"/>
+  <path class="arrow" d="M 1468 249 C 1510 249, 1534 320, 1534 385 C 1534 444, 1506 523, 1468 523"/>
+  <path class="arrow" d="M 1394 523 C 1422 523, 1428 523, 1432 523"/>
+  <path class="arrow-orange" d="M 1394 659 C 1428 659, 1430 544, 1432 532"/>
+  <path class="arrow" d="M 1468 523 L 1498 523"/>
+  <path class="arrow-muted dash" d="M 848 110 L 848 172"/>
+  <path class="arrow-muted dash" d="M 1251 110 L 1251 154"/>
+  <path class="arrow-muted dash" d="M 848 110 C 1010 110, 1050 187, 1108 209"/>
+
+  <text class="math" x="116" y="455">Residual update implemented in each block:</text>
+  <text class="math" x="116" y="490">x = x + SelfAttn_frozen(x) + LoRA_self(x)</text>
+  <text class="math" x="116" y="522">x = x + CrossAttn_scene_frozen(x, scene) + LoRA_scene(x, scene)</text>
+  <text class="math" x="116" y="554">x = x + gamma_bev * CrossAttn_bev(x, selected_BEV)</text>
+  <text class="math" x="116" y="586">x = x + MLP_frozen(x) + LoRA_mlp(x)</text>
+
+  <rect x="116" y="640" width="710" height="88" fill="#ffffff" stroke="#d5dde8" stroke-width="1.2" rx="8"/>
+  <text class="small" x="142" y="672">Decoder usage: repeated for ref_num layers; returns intermediate tokens for trajectory heads.</text>
+  <text class="small" x="142" y="702">Scorer usage: repeated for scorer_ref_num layers; refines embedded proposals before PDM sub-score heads.</text>
+
+  <rect x="70" y="882" width="1560" height="58" fill="#fbfcfe" stroke="#d5dde8" stroke-width="1.2" rx="8"/>
+  <rect class="frozen" x="96" y="902" width="24" height="18"/>
+  <text class="legend" x="132" y="916">frozen pretrained DrivoR sublayer</text>
+  <rect class="train" x="400" y="902" width="24" height="18"/>
+  <text class="legend" x="436" y="916">trainable side-LoRA adapter</text>
+  <rect class="bev" x="700" y="902" width="24" height="18"/>
+  <text class="legend" x="736" y="916">new trainable BEV cross-attention path, gamma initialized to 0.0</text>
+</svg>

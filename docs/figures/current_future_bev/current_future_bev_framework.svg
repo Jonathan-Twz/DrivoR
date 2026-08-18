@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1020" viewBox="0 0 1800 1020" role="img" aria-labelledby="title desc">
+  <title id="title">Current and Future BEV Oracle Framework for DrivoR</title>
+  <desc id="desc">Academic framework diagram showing DrivoR camera and lidar scene tokens, current and privileged future BEV tokenization, future-priority BEV token routing, and BEV-aware trajectory decoder and scorer.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#223044"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a95a6"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c75f18"/>
+    </marker>
+    <linearGradient id="bevGrad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f7d18f"/>
+      <stop offset="100%" stop-color="#e98443"/>
+    </linearGradient>
+    <linearGradient id="futureGrad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#d8f1e6"/>
+      <stop offset="100%" stop-color="#48aa86"/>
+    </linearGradient>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 31px; font-weight: 700; fill: #172033; letter-spacing: 0; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 16px; fill: #4d5a6c; letter-spacing: 0; }
+      .section { font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: 700; fill: #273246; letter-spacing: 0.5px; }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 700; fill: #182233; letter-spacing: 0; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #4b5668; letter-spacing: 0; }
+      .tiny { font-family: Arial, Helvetica, sans-serif; font-size: 12px; fill: #596579; letter-spacing: 0; }
+      .note { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #273246; letter-spacing: 0; }
+      .panel { fill: #f6f8fb; stroke: #c9d2df; stroke-width: 1.6; rx: 8; }
+      .box { fill: #ffffff; stroke: #aeb9c8; stroke-width: 1.5; rx: 8; }
+      .frozen { fill: #ecf1f7; stroke: #9daabc; stroke-width: 1.5; rx: 8; }
+      .train { fill: #fff3df; stroke: #d8843b; stroke-width: 1.8; rx: 8; }
+      .green { fill: #eef9f4; stroke: #50a987; stroke-width: 1.8; rx: 8; }
+      .purple { fill: #f1effb; stroke: #8a78c7; stroke-width: 1.6; rx: 8; }
+      .head { fill: #eef3f8; stroke: #6f7f94; stroke-width: 1.5; rx: 8; }
+      .loss { fill: #f5edf2; stroke: #ae6f91; stroke-width: 1.6; rx: 8; }
+      .arrow { fill: none; stroke: #223044; stroke-width: 2.2; marker-end: url(#arrow); }
+      .arrow-muted { fill: none; stroke: #8a95a6; stroke-width: 1.7; marker-end: url(#arrow-muted); }
+      .arrow-orange { fill: none; stroke: #c75f18; stroke-width: 2.4; marker-end: url(#arrow-orange); }
+      .dash { stroke-dasharray: 7 6; }
+      .legend-text { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #273246; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="1020"/>
+  <text class="title" x="70" y="58">Current + Privileged Future BEV Injection into DrivoR Decoder and Scorer</text>
+  <text class="subtitle" x="70" y="87">Implementation-level view for the scorer-decoder co-tuning experiment with zero-initialized BEV gates and side-LoRA adapters.</text>
+
+  <rect class="panel" x="54" y="125" width="378" height="690"/>
+  <text class="section" x="78" y="158">INPUTS</text>
+
+  <rect class="box" x="86" y="190" width="294" height="86"/>
+  <text class="label" x="110" y="222">Current cameras</text>
+  <text class="small" x="110" y="247">multi-view RGB at time T</text>
+  <text class="tiny" x="110" y="267">used by the original DrivoR encoder</text>
+
+  <rect class="box" x="86" y="310" width="294" height="76"/>
+  <text class="label" x="110" y="342">Lidar / ego status</text>
+  <text class="small" x="110" y="367">optional lidar scene tokens + ego token</text>
+
+  <rect class="train" x="86" y="434" width="294" height="92"/>
+  <text class="label" x="110" y="466">Current BEV feature</text>
+  <text class="small" x="110" y="491">B x C x H x W at time T</text>
+  <text class="tiny" x="110" y="511">config: use_bev_feature=true</text>
+
+  <rect class="green" x="86" y="574" width="294" height="112"/>
+  <text class="label" x="110" y="606">Privileged future BEV</text>
+  <text class="small" x="110" y="631">B x K x C x H x W</text>
+  <text class="small" x="110" y="652">K=4 future steps, stride=1</text>
+  <text class="tiny" x="110" y="672">train/validation oracle information</text>
+
+  <rect class="panel" x="474" y="125" width="410" height="690"/>
+  <text class="section" x="498" y="158">TOKENIZATION AND ROUTING</text>
+
+  <rect class="frozen" x="520" y="200" width="300" height="104"/>
+  <text class="label" x="548" y="233">Image / lidar encoder</text>
+  <text class="small" x="548" y="258">pretrained DrivoR backbone</text>
+  <text class="tiny" x="548" y="280">outputs scene_features tokens</text>
+
+  <rect class="train" x="520" y="394" width="300" height="94"/>
+  <text class="label" x="548" y="427">BEV tokenizer</text>
+  <text class="small" x="548" y="452">current BEV -> 64 tokens</text>
+  <text class="tiny" x="548" y="473">d_model=256 token sequence</text>
+
+  <rect class="green" x="520" y="530" width="300" height="120"/>
+  <text class="label" x="548" y="563">BEV tokenizer + time emb.</text>
+  <text class="small" x="548" y="588">future BEV -> K x 64 tokens</text>
+  <text class="small" x="548" y="610">flatten to 256 future tokens</text>
+  <text class="tiny" x="548" y="631">learned future_bev_time_embed</text>
+
+  <rect class="purple" x="512" y="700" width="316" height="82"/>
+  <text class="label" x="540" y="732">BEV token selector</text>
+  <text class="small" x="540" y="757">implemented route: future tokens first</text>
+  <text class="tiny" x="540" y="776">current tokens are fallback if future absent</text>
+
+  <rect class="panel" x="930" y="125" width="450" height="690"/>
+  <text class="section" x="954" y="158">DRIVOR HEADS WITH BEV CROSS-ATTENTION</text>
+
+  <rect class="box" x="975" y="192" width="344" height="70"/>
+  <text class="label" x="1000" y="224">Ego-conditioned trajectory queries</text>
+  <text class="small" x="1000" y="247">ego token + learned proposal embeddings</text>
+
+  <rect class="train" x="975" y="308" width="344" height="126"/>
+  <text class="label" x="1000" y="341">BEV-aware trajectory decoder</text>
+  <text class="small" x="1000" y="367">self-attn + scene cross-attn + BEV cross-attn</text>
+  <text class="small" x="1000" y="389">side-LoRA rank=16, BEV gate init=0</text>
+  <text class="tiny" x="1000" y="413">outputs refined trajectory tokens per refiner layer</text>
+
+  <rect class="head" x="1018" y="474" width="258" height="72"/>
+  <text class="label" x="1044" y="505">Trajectory heads</text>
+  <text class="small" x="1044" y="529">proposal_list and final proposals</text>
+
+  <rect class="train" x="975" y="592" width="344" height="116"/>
+  <text class="label" x="1000" y="625">BEV-aware scorer decoder</text>
+  <text class="small" x="1000" y="650">proposal embeddings attend to scene tokens</text>
+  <text class="small" x="1000" y="672">and selected BEV tokens</text>
+  <text class="tiny" x="1000" y="693">side-LoRA rank=16, BEV gate init=0</text>
+
+  <rect class="panel" x="1426" y="125" width="320" height="690"/>
+  <text class="section" x="1450" y="158">OUTPUTS AND LOSSES</text>
+
+  <rect class="box" x="1470" y="272" width="224" height="84"/>
+  <text class="label" x="1495" y="304">Trajectory output</text>
+  <text class="small" x="1495" y="329">best proposal selected by</text>
+  <text class="small" x="1495" y="350">predicted PDM score</text>
+
+  <rect class="box" x="1470" y="420" width="224" height="110"/>
+  <text class="label" x="1495" y="452">Scorer outputs</text>
+  <text class="small" x="1495" y="477">collision, drivable area,</text>
+  <text class="small" x="1495" y="499">direction, TTC, progress,</text>
+  <text class="small" x="1495" y="521">comfort logits</text>
+
+  <rect class="loss" x="1470" y="596" width="224" height="86"/>
+  <text class="label" x="1495" y="628">Training objective</text>
+  <text class="small" x="1495" y="653">trajectory loss + scorer loss</text>
+  <text class="tiny" x="1495" y="673">W&amp;B online experiment logging</text>
+
+  <path class="arrow" d="M 380 234 C 438 234, 455 252, 520 252"/>
+  <path class="arrow" d="M 380 348 C 438 348, 455 252, 520 252"/>
+  <path class="arrow-orange" d="M 380 480 C 438 480, 455 441, 520 441"/>
+  <path class="arrow" d="M 380 630 C 438 630, 455 590, 520 590"/>
+  <path class="arrow" d="M 820 252 C 890 252, 910 340, 975 356"/>
+  <path class="arrow-muted" d="M 820 252 C 900 252, 910 630, 975 643"/>
+  <path class="arrow-orange" d="M 670 488 L 670 700"/>
+  <path class="arrow" d="M 670 650 L 670 700"/>
+  <path class="arrow-orange dash" d="M 828 742 C 890 742, 910 381, 975 381"/>
+  <path class="arrow-orange dash" d="M 828 742 C 900 742, 914 658, 975 658"/>
+  <path class="arrow" d="M 1147 262 L 1147 308"/>
+  <path class="arrow" d="M 1147 434 L 1147 474"/>
+  <path class="arrow" d="M 1147 546 L 1147 592"/>
+  <path class="arrow" d="M 1319 375 C 1390 375, 1412 316, 1470 316"/>
+  <path class="arrow" d="M 1319 652 C 1390 652, 1412 475, 1470 475"/>
+  <path class="arrow-muted" d="M 1582 530 L 1582 596"/>
+
+  <text class="tiny" x="840" y="727">same selected BEV token sequence</text>
+  <text class="tiny" x="840" y="747">is passed to decoder and scorer</text>
+
+  <rect x="70" y="856" width="1660" height="106" fill="#fbfcfe" stroke="#d5dde8" stroke-width="1.2" rx="8"/>
+  <text class="section" x="96" y="888">LEGEND AND IMPLEMENTATION NOTES</text>
+  <rect class="frozen" x="100" y="910" width="24" height="18"/>
+  <text class="legend-text" x="134" y="924">pretrained / original DrivoR path</text>
+  <rect class="train" x="344" y="910" width="24" height="18"/>
+  <text class="legend-text" x="378" y="924">new BEV-aware trainable modules: tokenizer, BEV cross-attn, side-LoRA, gates</text>
+  <rect class="green" x="872" y="910" width="24" height="18"/>
+  <text class="legend-text" x="906" y="924">privileged future BEV oracle tokens, available during training/validation for this experiment</text>
+  <text class="legend-text" x="100" y="948">Code behavior: when future BEV tokens exist, decoder_bev_tokens and scorer_bev_tokens use future BEV; current BEV tokens are loaded but used only as fallback.</text>
+</svg>

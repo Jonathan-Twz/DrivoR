@@ -35,6 +35,8 @@ pip install -e .
 
 # Training
 
+Training keeps the five checkpoints with the highest `val/score_epoch` in addition to `last.ckpt`. Prefer evaluating several of these top validation checkpoints on NavSim v1/v2, because validation score is a proxy and may not rank checkpoints by PDMS/EPDMS. Epoch-end NAVSIM-v1 PDMS evaluation during training is disabled by default; keep PDMS/EPDMS evaluation as a separate post-training step unless explicitly debugging it.
+
 ```bash
 cd drivoR
 conda activate drivoR

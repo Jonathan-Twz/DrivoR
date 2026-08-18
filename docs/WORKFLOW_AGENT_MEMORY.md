@@ -31,6 +31,7 @@
 - **Hydra**：`scene_filter_token_file` 即每行一个 **scene token**，限制数据集与预计算 BEV 对齐。
 - **默认策略**：`TRAINER_STRATEGY=ddp_find_unused_parameters_true`（BEV scorer 冻结主网后，仍有参数可能未参与某步 loss，纯 `ddp` 会报 unused parameters）。
 - **W&B**：`USE_WANDB=1`；`WANDB_MODE=offline` 可离线；DDP 下只应在 rank 0 初始化 W&B logger。
+- **W&B 命名约定**：run name 使用 `<experiment>/<MM.DD_HH.MM>`，例如 `Jul14-future-bev-decoder-scorer-nocache/07.14_16.05`。`experiment` 用日期前缀 + 关键信息（如 `future-bev-decoder-scorer-nocache`）；若 batch/GPU/cache/worker 等设置偏离对照实验，需要在 `experiment` 名里显式标注（例如 `batch8`、`2gpu`、`cache`/`nocache`）。
 - **多卡稳定性 env（guppy）**：`NCCL_P2P_DISABLE=1`、`NCCL_IB_DISABLE=1`。裸 `torch.distributed` 两 rank NCCL probe 在默认 NCCL transport 下会卡/timeout，设置这两个变量后 `all_reduce`/`barrier` 正常。
 - **Python env**：脚本里的 `PYTHON_BIN` 可被 shell 环境变量覆盖。若输出中 Python 不是预期 conda env，先 `unset PYTHON_BIN` 或显式 `PYTHON_BIN=/path/to/env/bin/python`。
 
@@ -81,6 +82,7 @@
 - **现象**：Epoch 0 训练和验证都跑完了，但在保存 checkpoint 时 `ModelCheckpoint(monitor='val/score_epoch')` 报错找不到该 key。
 - **原因**：`val/score` 被 log 为 `on_step=False, on_epoch=True`，PL 在此情况下不加 `_epoch` 后缀——key 就是 `val/score`。只有 `on_step=True, on_epoch=True` 同时为真时，PL 才会生成 `_step` 和 `_epoch` 双 key。
 - **修复**：把 `val/score` 改为 `on_step=True, on_epoch=True`，这样 PL 自动产生 `val/score_epoch`，`ModelCheckpoint` 可正常 monitor。
+- **当前策略**：DrivoR agent 的 `ModelCheckpoint` 使用 `monitor='val/score_epoch'`, `mode='max'`, `save_top_k=5`，保留验证分数最高的 5 个 `best-*` checkpoints，同时另存 `last.ckpt`。由于 `val/score_epoch` 只是 PDMS/EPDMS 的 proxy，最终模型选择应评估多个 top-k checkpoints，而不是只看最高验证分数。
 
 ### 7. WandB 只看到 `train/loss_step`，其他 train loss 不显示
 
@@ -146,6 +148,8 @@
 - 其他 train losses → `on_step=True, on_epoch=False` → 原名（如 `train/trajectory_loss`）
 - `val/score` → `on_step=True, on_epoch=True` → `val/score_step` + `val/score_epoch`（用于 ModelCheckpoint monitor）
 - 其他 val metrics → `on_step=False, on_epoch=True` → 原名（如 `val/l2`）
+- DrivoR `ModelCheckpoint` 保留 `val/score_epoch` 最高的 5 个 best checkpoints，并保留 `last.ckpt`。
+- 默认不要在训练中跑 NAVSIM-v1 PDMS；`scripts/training/run_drivor_bev_decoder_from_scratch.sh` 默认 `DRIVOR_EPOCH_PDMS_EVAL=0`。如显式设 `DRIVOR_EPOCH_PDMS_EVAL=1`，`NavsimV1PDMSEvalCallback` 会在 validation epoch 后保存临时 ckpt，调用 `scripts/evaluation/run_drivor_bev_decoder_evaluation.sh` 跑官方 navtest PDMS，并把 CSV 的 `average` row 记录到 W&B `test/**`；这只适合调试，best checkpoint 仍按 `val/score_epoch` 保存。
 
 ## Dataset Caching
 
