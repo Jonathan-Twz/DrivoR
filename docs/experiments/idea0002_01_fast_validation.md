@@ -88,11 +88,15 @@ The final proposal-world checkpoint (`best-epoch=3-step=64.ckpt`) was inspected 
 
 ![All 64 proposal-specific rollout deviations](../figures/idea0002_01/rollouts/d973628ca1235533_all64_rollouts.png)
 
+![BEV resolution pipeline and display-only upsampling](../figures/idea0002_01/rollouts/d973628ca1235533_highres_rollouts.png)
+
 - Mean current-to-future latent RMS: `0.569474`
 - Mean pairwise RMS across candidate futures: `0.005400`
 - Refine gate: `1.6268e-6`; score gate: `-2.6762e-6`
 
 The Transformer applies a substantial shared transformation to the current BEV, but its proposal-specific variation is about two orders of magnitude smaller. This indicates weak action conditioning in addition to the nearly closed output gates. Regenerate the plots with `scripts/viz/plot_proposal_world_rollouts.py`.
+
+The exported current-BEV tensor is natively `256x128x128`. The tokenizer's stride-8 patch embedding reduces this to `16x16`, and adaptive pooling reduces it again to 64 (`8x8`) tokens. The world model predicts only at `8x8`; the 128x128 rollout renderings above use bicubic display interpolation and do not recover discarded spatial detail.
 
 ## Interpretation
 

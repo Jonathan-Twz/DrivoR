@@ -12,6 +12,7 @@ from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 from matplotlib.colors import Normalize
 from omegaconf import OmegaConf
 
@@ -121,10 +122,14 @@ def load_model(checkpoint: Path, device: torch.device) -> DrivoRModel:
 
 def run_inference(model: DrivoRModel, features: Dict[str, torch.Tensor]) -> Dict[str, np.ndarray]:
     current_tokens: List[torch.Tensor] = []
+    patch_grids: List[torch.Tensor] = []
     future_chunks: List[torch.Tensor] = []
 
     bev_hook = model.bev_tokenizer.register_forward_hook(
         lambda _module, _inputs, output: current_tokens.append(output.detach().cpu())
+    )
+    patch_hook = model.bev_tokenizer.patch_embed.register_forward_hook(
+        lambda _module, _inputs, output: patch_grids.append(output.detach().cpu())
     )
     world_hook = model.proposal_world_refiner.world_model.register_forward_hook(
         lambda _module, _inputs, output: future_chunks.append(output.detach().cpu())
@@ -134,11 +139,13 @@ def run_inference(model: DrivoRModel, features: Dict[str, torch.Tensor]) -> Dict
             output = model(features)
     finally:
         bev_hook.remove()
+        patch_hook.remove()
         world_hook.remove()
 
-    if len(current_tokens) != 1 or not future_chunks:
+    if len(current_tokens) != 1 or len(patch_grids) != 1 or not future_chunks:
         raise RuntimeError(
-            f"Expected one current-token call and rollout chunks, got {len(current_tokens)} and {len(future_chunks)}"
+            "Expected one current-token call, one patch-grid call, and rollout chunks; "
+            f"got {len(current_tokens)}, {len(patch_grids)}, and {len(future_chunks)}"
         )
 
     current = current_tokens[0][0]
@@ -147,6 +154,7 @@ def run_inference(model: DrivoRModel, features: Dict[str, torch.Tensor]) -> Dict
     scores = output["pdm_score"][0].detach().cpu()
     return {
         "current_tokens": current.numpy(),
+        "current_patch_grid": patch_grids[0][0].numpy(),
         "future_tokens": futures.numpy(),
         "base_proposals": base_proposals.numpy(),
         "scores": scores.numpy(),
@@ -166,6 +174,35 @@ def shared_pca_rgb(current: np.ndarray, futures: np.ndarray) -> tuple[np.ndarray
         low, high = np.percentile(projected[..., channel], [1.0, 99.0])
         rgb[..., channel] = np.clip((projected[..., channel] - low) / (high - low + 1e-8), 0, 1)
     return rgb[0], rgb[1:]
+
+
+def feature_map_pca_rgb(feature_chw: np.ndarray) -> np.ndarray:
+    """Project one CxHxW feature map to RGB without implying semantic channels."""
+    channels, height, width = feature_chw.shape
+    flat = feature_chw.reshape(channels, -1).T.astype(np.float64)
+    flat -= flat.mean(axis=0, keepdims=True)
+    if flat.shape[0] > 4096:
+        sample_indices = np.linspace(0, flat.shape[0] - 1, 4096, dtype=np.int64)
+        fit = flat[sample_indices]
+    else:
+        fit = flat
+    _, _, vh = np.linalg.svd(fit, full_matrices=False)
+    projected = (flat @ vh[:3].T).reshape(height, width, 3)
+    rgb = np.empty_like(projected, dtype=np.float32)
+    for channel in range(3):
+        low, high = np.percentile(projected[..., channel], [1.0, 99.0])
+        rgb[..., channel] = np.clip(
+            (projected[..., channel] - low) / (high - low + 1e-8), 0, 1
+        )
+    return rgb
+
+
+def upsample_rgb(rgb: np.ndarray, size: int = 128) -> np.ndarray:
+    tensor = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0)
+    upsampled = F.interpolate(
+        tensor, size=(size, size), mode="bicubic", align_corners=False
+    ).clamp(0, 1)
+    return upsampled[0].permute(1, 2, 0).numpy()
 
 
 def select_diverse_candidates(proposals: np.ndarray, scores: np.ndarray) -> List[int]:
@@ -314,6 +351,72 @@ def plot_all_rollouts(data: Dict[str, np.ndarray], output_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_high_resolution(data: Dict[str, np.ndarray], output_path: Path) -> List[int]:
+    current = data["current_tokens"]
+    futures = data["future_tokens"]
+    proposals = data["base_proposals"]
+    scores = data["scores"]
+    selected = select_diverse_candidates(proposals, scores)
+    current_rgb, future_rgb = shared_pca_rgb(current, futures)
+    raw_rgb = feature_map_pca_rgb(data["raw_bev"])
+    patch_rgb = feature_map_pca_rgb(data["current_patch_grid"])
+    best = int(np.argmax(scores))
+
+    fig = plt.figure(figsize=(18, 9.2))
+    grid = fig.add_gridspec(2, 5, height_ratios=[1.0, 1.0])
+    pipeline = [
+        (raw_rgb, "Exported current BEV\n128×128 native"),
+        (patch_rgb, "Stride-8 patch embedding\n16×16 native"),
+        (current_rgb, "Adaptive pooled tokens\n8×8 native"),
+        (future_rgb[best], f"Best proposal #{best}\n8×8 native rollout"),
+        (upsample_rgb(future_rgb[best]), "Bicubic display\n128×128 (interpolated)"),
+    ]
+    for column, (image, title) in enumerate(pipeline):
+        axis = fig.add_subplot(grid[0, column])
+        axis.imshow(image, interpolation="nearest" if image.shape[0] < 128 else "bilinear")
+        axis.set_title(title, fontsize=12, fontweight="bold")
+        axis.set_xticks([])
+        axis.set_yticks([])
+
+    colors = ["#2166AC", "#67A9CF", "#F4A261", "#EF8354", "#B2182B"]
+    for column, (color, index) in enumerate(zip(colors, selected)):
+        axis = fig.add_subplot(grid[1, column])
+        axis.imshow(upsample_rgb(future_rgb[index]), interpolation="bilinear")
+        axis.text(
+            0.5,
+            0.97,
+            f"Proposal #{index} · score {scores[index]:.3f}\n8×8 → 128×128 display",
+            transform=axis.transAxes,
+            ha="center",
+            va="top",
+            fontsize=11,
+            color=color,
+            fontweight="bold",
+            bbox={"facecolor": "white", "edgecolor": color, "alpha": 0.82, "pad": 3},
+        )
+        axis.set_xticks([])
+        axis.set_yticks([])
+
+    fig.suptitle(
+        "BEV Feature Resolution and High-Resolution Rollout Rendering",
+        fontsize=21,
+        fontweight="bold",
+        y=0.985,
+    )
+    fig.tight_layout(rect=[0.01, 0.065, 0.99, 0.93], h_pad=4.5, w_pad=0.7)
+    fig.text(
+        0.5,
+        0.025,
+        "Only the exported current BEV is natively 128×128. Future rollouts are 8×8; bicubic upsampling adds no spatial information.",
+        ha="center",
+        fontsize=11,
+        color="#5E6A72",
+    )
+    fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return selected
+
+
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
@@ -321,12 +424,15 @@ def main() -> None:
     model = load_model(args.checkpoint, device)
     features = load_features(args, device)
     data = run_inference(model, features)
+    data["raw_bev"] = features["bev_feature"][0].detach().cpu().numpy()
 
     selected_path = args.output_dir / f"{args.scene_token}_selected_rollouts.png"
     all_path = args.output_dir / f"{args.scene_token}_all64_rollouts.png"
+    highres_path = args.output_dir / f"{args.scene_token}_highres_rollouts.png"
     data_path = args.output_dir / f"{args.scene_token}_rollouts.npz"
     selected = plot_selected(data, selected_path)
     plot_all_rollouts(data, all_path)
+    plot_high_resolution(data, highres_path)
     np.savez_compressed(data_path, selected=np.asarray(selected), **data)
 
     delta = np.linalg.norm(
@@ -343,6 +449,7 @@ def main() -> None:
     print(f"mean_candidate_pairwise_rms={pairwise.mean():.6f}")
     print(selected_path.resolve())
     print(all_path.resolve())
+    print(highres_path.resolve())
     print(data_path.resolve())
 
 
