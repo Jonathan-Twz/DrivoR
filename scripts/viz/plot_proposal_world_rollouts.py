@@ -40,6 +40,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-name", default=DEFAULT_LOG)
     parser.add_argument("--scene-token", default=DEFAULT_TOKEN)
     parser.add_argument(
+        "--selected-candidates",
+        type=int,
+        nargs="+",
+        default=[31, 37, 62, 1, 6],
+        help="Proposal IDs for the trajectory-overlay and imagined-BEV figure.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("docs/figures/idea0002_01/rollouts"),
@@ -203,6 +210,11 @@ def upsample_rgb(rgb: np.ndarray, size: int = 128) -> np.ndarray:
         tensor, size=(size, size), mode="bicubic", align_corners=False
     ).clamp(0, 1)
     return upsampled[0].permute(1, 2, 0).numpy()
+
+
+def ego_up_image(rgb: np.ndarray) -> np.ndarray:
+    """Convert exported [row=y, col=x] layout to ego-forward-up display."""
+    return rgb.transpose(1, 0, 2)[::-1, ::-1]
 
 
 def select_diverse_candidates(proposals: np.ndarray, scores: np.ndarray) -> List[int]:
@@ -417,6 +429,102 @@ def plot_high_resolution(data: Dict[str, np.ndarray], output_path: Path) -> List
     return selected
 
 
+def plot_requested_candidates(
+    data: Dict[str, np.ndarray], selected: List[int], output_path: Path
+) -> None:
+    if len(selected) != 5:
+        raise ValueError("The requested-candidate figure requires exactly five proposal IDs")
+    if min(selected) < 0 or max(selected) >= data["future_tokens"].shape[0]:
+        raise ValueError(f"Proposal IDs must be in [0, 63], got {selected}")
+
+    current = data["current_tokens"]
+    futures = data["future_tokens"]
+    proposals = data["base_proposals"]
+    scores = data["scores"]
+    _, future_rgb = shared_pca_rgb(current, futures)
+    raw_rgb = ego_up_image(feature_map_pca_rgb(data["raw_bev"]))
+    colors = ["#E76F51", "#2A9D8F", "#7B61A8", "#3A86C8", "#D4A017"]
+
+    fig = plt.figure(figsize=(20, 5.0))
+    grid = fig.add_gridspec(1, 6, width_ratios=[1.45, 1, 1, 1, 1, 1])
+    current_axis = fig.add_subplot(grid[0, 0])
+    current_axis.imshow(
+        raw_rgb,
+        extent=(-51.2, 51.2, -51.2, 51.2),
+        origin="upper",
+        interpolation="bilinear",
+    )
+    # Exported BEV orientation: horizontal display coordinate is vehicle-right (-y),
+    # while vertical display coordinate is longitudinal x (ego-forward-up).
+    for index in sorted(selected, key=lambda item: proposals[item, -1, 0], reverse=True):
+        color = colors[selected.index(index)]
+        trajectory = proposals[index]
+        current_axis.plot(
+            -trajectory[:, 1],
+            trajectory[:, 0],
+            color=color,
+            marker="o",
+            markersize=3.5,
+            linewidth=2.4,
+            label=f"#{index} ({trajectory[-1, 0]:.2f} m)",
+        )
+        current_axis.annotate(
+            f"#{index}",
+            (-trajectory[-1, 1], trajectory[-1, 0]),
+            xytext=(4, 1),
+            textcoords="offset points",
+            color=color,
+            fontsize=8,
+            fontweight="bold",
+        )
+    current_axis.scatter([0], [0], marker="^", s=65, color="#172026", zorder=10)
+    current_axis.set_xlim(-2.0, 2.0)
+    current_axis.set_ylim(-1.0, 20.0)
+    current_axis.set_aspect("auto")
+    current_axis.set_xlabel("lateral-right (m)")
+    current_axis.set_ylabel("forward (m)")
+    current_axis.set_title(
+        "Current BEV + trajectories\n128×128 native · ego-up crop",
+        fontsize=12,
+        fontweight="bold",
+    )
+    current_axis.legend(loc="upper left", fontsize=7.5, framealpha=0.88)
+
+    for column, (color, index) in enumerate(zip(colors, selected), start=1):
+        axis = fig.add_subplot(grid[0, column])
+        imagined = ego_up_image(upsample_rgb(future_rgb[index]))
+        axis.imshow(imagined, interpolation="bilinear")
+        axis.set_title(
+            f"Proposal #{index}\nscore={scores[index]:.3f}",
+            fontsize=12,
+            color=color,
+            fontweight="bold",
+        )
+        axis.set_xticks([])
+        axis.set_yticks([])
+        for spine in axis.spines.values():
+            spine.set_edgecolor(color)
+            spine.set_linewidth(2.0)
+
+    fig.suptitle(
+        "Selected Trajectories and Proposal-Conditioned Imagined BEV Features",
+        fontsize=20,
+        fontweight="bold",
+        y=0.98,
+    )
+    fig.tight_layout(rect=[0.01, 0.09, 0.99, 0.91], w_pad=1.2)
+    fig.text(
+        0.5,
+        0.035,
+        "Imagined BEVs are native 8×8 latent tokens rendered at 128×128 with bicubic interpolation; colors are shared-PCA features, not semantic classes.",
+        ha="center",
+        fontsize=10.5,
+        color="#5E6A72",
+    )
+    fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
@@ -429,10 +537,13 @@ def main() -> None:
     selected_path = args.output_dir / f"{args.scene_token}_selected_rollouts.png"
     all_path = args.output_dir / f"{args.scene_token}_all64_rollouts.png"
     highres_path = args.output_dir / f"{args.scene_token}_highres_rollouts.png"
+    requested_ids = "_".join(str(index) for index in args.selected_candidates)
+    requested_path = args.output_dir / f"{args.scene_token}_proposals_{requested_ids}.png"
     data_path = args.output_dir / f"{args.scene_token}_rollouts.npz"
     selected = plot_selected(data, selected_path)
     plot_all_rollouts(data, all_path)
     plot_high_resolution(data, highres_path)
+    plot_requested_candidates(data, args.selected_candidates, requested_path)
     np.savez_compressed(data_path, selected=np.asarray(selected), **data)
 
     delta = np.linalg.norm(
@@ -450,6 +561,7 @@ def main() -> None:
     print(selected_path.resolve())
     print(all_path.resolve())
     print(highres_path.resolve())
+    print(requested_path.resolve())
     print(data_path.resolve())
 
 

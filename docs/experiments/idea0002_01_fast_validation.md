@@ -90,6 +90,8 @@ The final proposal-world checkpoint (`best-epoch=3-step=64.ckpt`) was inspected 
 
 ![BEV resolution pipeline and display-only upsampling](../figures/idea0002_01/rollouts/d973628ca1235533_highres_rollouts.png)
 
+![Selected proposals 31, 37, 62, 1, and 6 over the current BEV with imagined rollouts](../figures/idea0002_01/rollouts/d973628ca1235533_proposals_31_37_62_1_6.png)
+
 - Mean current-to-future latent RMS: `0.569474`
 - Mean pairwise RMS across candidate futures: `0.005400`
 - Refine gate: `1.6268e-6`; score gate: `-2.6762e-6`
