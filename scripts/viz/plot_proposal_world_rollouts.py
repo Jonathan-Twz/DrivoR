@@ -212,6 +212,14 @@ def upsample_rgb(rgb: np.ndarray, size: int = 128) -> np.ndarray:
     return upsampled[0].permute(1, 2, 0).numpy()
 
 
+def upsample_scalar(values: np.ndarray, size: int = 128) -> np.ndarray:
+    tensor = torch.from_numpy(values).unsqueeze(0).unsqueeze(0)
+    upsampled = F.interpolate(
+        tensor, size=(size, size), mode="bicubic", align_corners=False
+    ).clamp_min(0)
+    return upsampled[0, 0].numpy()
+
+
 def ego_up_image(rgb: np.ndarray) -> np.ndarray:
     """Convert exported [row=y, col=x] layout to ego-forward-up display."""
     return rgb.transpose(1, 0, 2)[::-1, ::-1]
@@ -442,81 +450,137 @@ def plot_requested_candidates(
     proposals = data["base_proposals"]
     scores = data["scores"]
     _, future_rgb = shared_pca_rgb(current, futures)
-    raw_rgb = ego_up_image(feature_map_pca_rgb(data["raw_bev"]))
+    raw_rgb = feature_map_pca_rgb(data["raw_bev"])
     colors = ["#E76F51", "#2A9D8F", "#7B61A8", "#3A86C8", "#D4A017"]
+    reference = selected[0]
+    differences = {
+        index: (
+            np.linalg.norm(futures[index] - futures[reference], axis=-1)
+            / np.sqrt(futures.shape[-1])
+        ).reshape(8, 8)
+        for index in selected
+    }
+    vmax = max(float(np.percentile(values, 99.0)) for values in differences.values())
 
-    fig = plt.figure(figsize=(20, 5.0))
-    grid = fig.add_gridspec(1, 6, width_ratios=[1.45, 1, 1, 1, 1, 1])
+    def to_native_pixels(trajectory: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # Exported feature layout is row=y and column=x over [-51.2, 51.2].
+        column = (trajectory[:, 0] + 51.2) / 102.4 * 127.0
+        row = (trajectory[:, 1] + 51.2) / 102.4 * 127.0
+        return column, row
+
+    def draw_trajectories(axis: plt.Axes, annotate: bool) -> None:
+        for index in sorted(
+            selected, key=lambda item: proposals[item, -1, 0], reverse=True
+        ):
+            color = colors[selected.index(index)]
+            column, row = to_native_pixels(proposals[index])
+            axis.plot(
+                column,
+                row,
+                color=color,
+                marker="o",
+                markersize=3.2,
+                linewidth=2.3,
+                label=f"#{index} ({proposals[index, -1, 0]:.2f} m)",
+            )
+            if annotate:
+                axis.annotate(
+                    f"#{index}",
+                    (column[-1], row[-1]),
+                    xytext=(3, -7 - 5 * selected.index(index)),
+                    textcoords="offset points",
+                    color=color,
+                    fontsize=8,
+                    fontweight="bold",
+                )
+        ego_column, ego_row = to_native_pixels(np.zeros((1, 3), dtype=np.float32))
+        axis.scatter(ego_column, ego_row, marker="^", s=60, color="#172026", zorder=10)
+
+    fig = plt.figure(figsize=(20, 9.3))
+    grid = fig.add_gridspec(2, 6, width_ratios=[1.35, 1, 1, 1, 1, 1])
     current_axis = fig.add_subplot(grid[0, 0])
-    current_axis.imshow(
-        raw_rgb,
-        extent=(-51.2, 51.2, -51.2, 51.2),
-        origin="upper",
-        interpolation="bilinear",
-    )
-    # Exported BEV orientation: horizontal display coordinate is vehicle-right (-y),
-    # while vertical display coordinate is longitudinal x (ego-forward-up).
-    for index in sorted(selected, key=lambda item: proposals[item, -1, 0], reverse=True):
-        color = colors[selected.index(index)]
-        trajectory = proposals[index]
-        current_axis.plot(
-            -trajectory[:, 1],
-            trajectory[:, 0],
-            color=color,
-            marker="o",
-            markersize=3.5,
-            linewidth=2.4,
-            label=f"#{index} ({trajectory[-1, 0]:.2f} m)",
-        )
-        current_axis.annotate(
-            f"#{index}",
-            (-trajectory[-1, 1], trajectory[-1, 0]),
-            xytext=(4, 1),
-            textcoords="offset points",
-            color=color,
-            fontsize=8,
-            fontweight="bold",
-        )
-    current_axis.scatter([0], [0], marker="^", s=65, color="#172026", zorder=10)
-    current_axis.set_xlim(-2.0, 2.0)
-    current_axis.set_ylim(-1.0, 20.0)
-    current_axis.set_aspect("auto")
-    current_axis.set_xlabel("lateral-right (m)")
-    current_axis.set_ylabel("forward (m)")
+    current_axis.imshow(raw_rgb, interpolation="bilinear")
+    draw_trajectories(current_axis, annotate=False)
+    current_axis.set_xticks([])
+    current_axis.set_yticks([])
     current_axis.set_title(
-        "Current BEV + trajectories\n128×128 native · ego-up crop",
+        "Current BEV + trajectories\n128×128 native orientation",
         fontsize=12,
         fontweight="bold",
     )
     current_axis.legend(loc="upper left", fontsize=7.5, framealpha=0.88)
 
+    zoom_axis = fig.add_subplot(grid[1, 0])
+    zoom_axis.imshow(raw_rgb, interpolation="bilinear")
+    draw_trajectories(zoom_axis, annotate=True)
+    x_left = (-2.0 + 51.2) / 102.4 * 127.0
+    x_right = (20.0 + 51.2) / 102.4 * 127.0
+    y_top = (-4.0 + 51.2) / 102.4 * 127.0
+    y_bottom = (4.0 + 51.2) / 102.4 * 127.0
+    zoom_axis.set_xlim(x_left, x_right)
+    zoom_axis.set_ylim(y_bottom, y_top)
+    zoom_axis.set_aspect("auto")
+    zoom_axis.set_xticks([])
+    zoom_axis.set_yticks([])
+    zoom_axis.set_title("Same current BEV · trajectory crop", fontsize=11, fontweight="bold")
+
+    difference_axes = []
+    difference_image = None
     for column, (color, index) in enumerate(zip(colors, selected), start=1):
-        axis = fig.add_subplot(grid[0, column])
-        imagined = ego_up_image(upsample_rgb(future_rgb[index]))
-        axis.imshow(imagined, interpolation="bilinear")
-        axis.set_title(
+        imagined_axis = fig.add_subplot(grid[0, column])
+        imagined_axis.imshow(upsample_rgb(future_rgb[index]), interpolation="bilinear")
+        imagined_axis.set_title(
             f"Proposal #{index}\nscore={scores[index]:.3f}",
             fontsize=12,
             color=color,
             fontweight="bold",
         )
-        axis.set_xticks([])
-        axis.set_yticks([])
-        for spine in axis.spines.values():
+        imagined_axis.set_xticks([])
+        imagined_axis.set_yticks([])
+        for spine in imagined_axis.spines.values():
             spine.set_edgecolor(color)
             spine.set_linewidth(2.0)
 
+        difference_axis = fig.add_subplot(grid[1, column])
+        difference_image = difference_axis.imshow(
+            upsample_scalar(differences[index]),
+            cmap="viridis",
+            vmin=0.0,
+            vmax=vmax,
+            interpolation="bilinear",
+        )
+        difference_axis.set_title(
+            f"RMS vs #{reference}: {differences[index].mean():.5f}",
+            fontsize=10.5,
+            color=color,
+            fontweight="bold",
+        )
+        difference_axis.set_xticks([])
+        difference_axis.set_yticks([])
+        difference_axes.append(difference_axis)
+
+    if difference_image is not None:
+        colorbar_axis = fig.add_axes([0.965, 0.19, 0.012, 0.28])
+        fig.colorbar(
+            difference_image,
+            cax=colorbar_axis,
+            orientation="vertical",
+            label=f"Amplified proposal-specific RMS difference from #{reference}",
+        )
+
     fig.suptitle(
-        "Selected Trajectories and Proposal-Conditioned Imagined BEV Features",
+        "Selected Trajectories and Verified Proposal-Conditioned BEV Differences",
         fontsize=20,
         fontweight="bold",
         y=0.98,
     )
-    fig.tight_layout(rect=[0.01, 0.09, 0.99, 0.91], w_pad=1.2)
+    fig.subplots_adjust(
+        left=0.025, right=0.95, top=0.86, bottom=0.12, wspace=0.10, hspace=0.24
+    )
     fig.text(
         0.5,
         0.035,
-        "Imagined BEVs are native 8×8 latent tokens rendered at 128×128 with bicubic interpolation; colors are shared-PCA features, not semantic classes.",
+        "Top: shared-PCA imagined features in the same native orientation as the earlier plot. Bottom: amplified differences prove the tensors are close, not identical.",
         ha="center",
         fontsize=10.5,
         color="#5E6A72",
