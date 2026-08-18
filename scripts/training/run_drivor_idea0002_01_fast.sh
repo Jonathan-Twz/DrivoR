@@ -141,6 +141,7 @@ fi
   cache_path="$CACHE_PATH" \
   use_cache_without_dataset=true \
   force_cache_computation=false \
+  +auto_resume_training=false \
   +scene_filter_token_file="$FIXED_TOKEN_FILE" \
   trainer.params.max_epochs="$MAX_EPOCHS" \
   +trainer.params.devices="$NUM_GPUS" \
