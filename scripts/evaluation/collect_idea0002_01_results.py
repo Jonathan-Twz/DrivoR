@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect paired W&B runs and render idea_0002_01 training curves."""
+"""Collect paired W&B or local CSV runs and render idea_0002_01 curves."""
 
 import argparse
 import csv
@@ -81,6 +81,44 @@ def summarize_run(run, label: str) -> Dict:
     }
 
 
+def read_csv_history(path: Path) -> List[Dict]:
+    rows: List[Dict] = []
+    with path.open(newline="") as stream:
+        for raw_row in csv.DictReader(stream):
+            row = {}
+            for key, value in raw_row.items():
+                if value in (None, ""):
+                    continue
+                try:
+                    row[key] = float(value)
+                except ValueError:
+                    row[key] = value
+            rows.append(row)
+    return rows
+
+
+def summarize_local_csv(path: Path, label: str) -> Dict:
+    if not path.is_file():
+        raise FileNotFoundError(f"Local metrics CSV does not exist: {path}")
+    rows = aggregate_history(read_csv_history(path))
+    val_rows = [row for row in rows if "val/score_epoch" in row]
+    best_row = max(val_rows, key=lambda row: row["val/score_epoch"]) if val_rows else {}
+    return {
+        "label": label,
+        "id": None,
+        "name": path.parents[2].name,
+        "url": None,
+        "state": "local",
+        "created_at": None,
+        "config": {},
+        "summary": {},
+        "source_csv": str(path.resolve()),
+        "epochs": rows,
+        "best_epoch": best_row.get("epoch"),
+        "best_val_score": best_row.get("val/score_epoch"),
+    }
+
+
 def write_epoch_csv(path: Path, records: Dict[str, Dict]) -> None:
     fieldnames = ["variant", "epoch", *METRICS]
     with path.open("w", newline="") as stream:
@@ -137,6 +175,8 @@ def main() -> None:
     parser.add_argument("--project", default="drivor-world-model-fast-validation")
     parser.add_argument("--static-run")
     parser.add_argument("--world-run")
+    parser.add_argument("--static-csv", type=Path)
+    parser.add_argument("--world-csv", type=Path)
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -149,26 +189,34 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api = wandb.Api()
-    entity = args.entity or api.default_entity
-    if not entity:
-        raise RuntimeError("W&B entity is unavailable; pass --entity")
-    project_path = f"{entity}/{args.project}"
+    if args.static_csv or args.world_csv:
+        if not (args.static_csv and args.world_csv):
+            parser.error("--static-csv and --world-csv must be provided together")
+        records = {
+            "static_bev_refiner": summarize_local_csv(args.static_csv, "static_bev_refiner"),
+            "proposal_world": summarize_local_csv(args.world_csv, "proposal_world"),
+        }
+    else:
+        api = wandb.Api()
+        entity = args.entity or api.default_entity
+        if not entity:
+            raise RuntimeError("W&B entity is unavailable; pass --entity")
+        project_path = f"{entity}/{args.project}"
 
-    static_run = (
-        api.run(f"{project_path}/{args.static_run}")
-        if args.static_run
-        else latest_matching_run(api, project_path, "Aug18-idea0002-01-static-bev-refiner-fast")
-    )
-    world_run = (
-        api.run(f"{project_path}/{args.world_run}")
-        if args.world_run
-        else latest_matching_run(api, project_path, "Aug18-idea0002-01-proposal-world-fast")
-    )
-    records = {
-        "static_bev_refiner": summarize_run(static_run, "static_bev_refiner"),
-        "proposal_world": summarize_run(world_run, "proposal_world"),
-    }
+        static_run = (
+            api.run(f"{project_path}/{args.static_run}")
+            if args.static_run
+            else latest_matching_run(api, project_path, "Aug18-idea0002-01-static-bev-refiner-fast")
+        )
+        world_run = (
+            api.run(f"{project_path}/{args.world_run}")
+            if args.world_run
+            else latest_matching_run(api, project_path, "Aug18-idea0002-01-proposal-world-fast")
+        )
+        records = {
+            "static_bev_refiner": summarize_run(static_run, "static_bev_refiner"),
+            "proposal_world": summarize_run(world_run, "proposal_world"),
+        }
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / "paired_results.json"
