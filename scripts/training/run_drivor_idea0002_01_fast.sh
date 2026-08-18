@@ -149,7 +149,7 @@ fi
   trainer.params.limit_train_batches="$LIMIT_TRAIN_BATCHES" \
   trainer.params.limit_val_batches="$LIMIT_VAL_BATCHES" \
   trainer.params.accumulate_grad_batches="$ACCUMULATE_GRAD_BATCHES" \
-  trainer.params.log_every_n_steps="$LOG_EVERY_N_STEPS" \
+  +trainer.params.log_every_n_steps="$LOG_EVERY_N_STEPS" \
   dataloader.params.batch_size="$BATCH_SIZE" \
   dataloader.params.num_workers="$NUM_WORKERS" \
   dataloader.params.prefetch_factor="$PREFETCH_FACTOR" \
