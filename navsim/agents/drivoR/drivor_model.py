@@ -10,6 +10,7 @@ from .layers.bev_tokenizer import BevTokenizer
 from .layers.bev_scorer_blocks import BevAwareScorer
 from .layers.bev_decoder_blocks import BevAwareTrajectoryDecoder
 from .layers.bev_residual_proposal_refiner import BevResidualProposalRefiner
+from .layers.proposal_world_refiner import ProposalConditionedWorldRefiner
 from navsim.agents.drivoR.utils import pylogger
 log = pylogger.get_pylogger(__name__)
 import logging
@@ -90,6 +91,14 @@ class DrivoRModel(nn.Module):
         self._bev_residual_refiner = self._use_bev and bool(
             config.get("use_bev_residual_proposal_refiner", False)
         )
+        self._proposal_world_refiner = self._use_bev and bool(
+            config.get("use_proposal_world_refiner", False)
+        )
+        if self._bev_residual_refiner and self._proposal_world_refiner:
+            raise ValueError(
+                "use_bev_residual_proposal_refiner and use_proposal_world_refiner "
+                "cannot both be enabled"
+            )
         self._use_privileged_future_bev = bool(config.get("use_privileged_future_bev", False))
         self._future_bev_in_decoder = self._use_privileged_future_bev and bool(
             config.get("use_future_bev_in_decoder", True)
@@ -130,6 +139,8 @@ class DrivoRModel(nn.Module):
 
         if self._bev_residual_refiner:
             self.bev_residual_proposal_refiner = BevResidualProposalRefiner(config)
+        if self._proposal_world_refiner:
+            self.proposal_world_refiner = ProposalConditionedWorldRefiner(config)
 
 
         # get the trajectory decoders
@@ -162,11 +173,12 @@ class DrivoRModel(nn.Module):
                 num_tokens=int(num_tok) if num_tok else None,
                 use_self_attn_block=bool(_bt("use_self_attn_block", False)),
             )
-            future_steps = int(config.get("future_bev_num_steps", 4))
-            self.future_bev_time_embed = nn.Parameter(
-                torch.zeros(1, max(1, future_steps), 1, int(config.tf_d_model))
-            )
-            nn.init.trunc_normal_(self.future_bev_time_embed, std=0.02)
+            if self._use_privileged_future_bev:
+                future_steps = int(config.get("future_bev_num_steps", 4))
+                self.future_bev_time_embed = nn.Parameter(
+                    torch.zeros(1, max(1, future_steps), 1, int(config.tf_d_model))
+                )
+                nn.init.trunc_normal_(self.future_bev_time_embed, std=0.02)
 
     def _zero_bev_batch(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         c = int(self._config.get("bev_channels", 80))
@@ -290,7 +302,25 @@ class DrivoRModel(nn.Module):
         traj_tokens = token_list[-1]
         proposals=proposal_list[-1]
 
-        if getattr(self, "_bev_residual_refiner", False):
+        proposal_world_score_residual = None
+        proposal_world_diagnostics = {}
+        if getattr(self, "_proposal_world_refiner", False):
+            base_proposals = proposals
+            path_queries = self.pos_embed(
+                base_proposals.reshape(base_proposals.shape[0], base_proposals.shape[1], -1).detach()
+            )
+            (
+                proposals,
+                proposal_delta,
+                proposal_world_score_residual,
+                proposal_world_diagnostics,
+            ) = self.proposal_world_refiner(
+                base_proposals,
+                path_queries,
+                bev_tokens,
+            )
+            proposal_list.append(proposals)
+        elif getattr(self, "_bev_residual_refiner", False):
             base_proposals = proposals
             path_queries = self.pos_embed(
                 base_proposals.reshape(base_proposals.shape[0], base_proposals.shape[1], -1).detach()
@@ -307,6 +337,7 @@ class DrivoRModel(nn.Module):
         output["proposals"] = proposals
         output["proposal_list"] = proposal_list
         output["proposal_delta"] = proposal_delta
+        output.update(proposal_world_diagnostics)
 
         # scoring
         B,N,_,_=proposals.shape
@@ -316,6 +347,8 @@ class DrivoRModel(nn.Module):
             tr_out = self.scorer_attention(embedded_traj, scene_features, scorer_bev_tokens)  # (B, N, d_model)
         else:
             tr_out = self.scorer_attention(embedded_traj, scene_features)  # (B, N, d_model)
+        if proposal_world_score_residual is not None:
+            tr_out = tr_out + proposal_world_score_residual
         tr_out = tr_out+ego_token
         pred_logit,pred_logit2, pred_agents_states, pred_area_logit ,bev_semantic_map,agent_states,agent_labels= self.scorer(proposals, tr_out)
 
@@ -343,4 +376,3 @@ class DrivoRModel(nn.Module):
         output["pdm_score"] = pdm_score
 
         return output
-

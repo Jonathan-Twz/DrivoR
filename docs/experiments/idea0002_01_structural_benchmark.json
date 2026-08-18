@@ -1,0 +1,22 @@
+{
+  "environment": {
+    "device": "cpu",
+    "batch": 1,
+    "bev_tokens": 64,
+    "proposals": 64,
+    "iterations": 3,
+    "note": "Module-only screening benchmark; use A100 measurements for runtime claims."
+  },
+  "variants": {
+    "static_bev_refiner": {
+      "parameters": 1868825,
+      "mean_latency_ms": 2.3731055359045663,
+      "median_latency_ms": 2.3603662848472595
+    },
+    "proposal_world": {
+      "parameters": 1874970,
+      "mean_latency_ms": 45.51375160614649,
+      "median_latency_ms": 47.80614748597145
+    }
+  }
+}

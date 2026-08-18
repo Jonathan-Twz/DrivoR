@@ -380,6 +380,7 @@ class DrivoRAgent(AbstractAgent):
                 expected_missing_prefixes = (
                     "_drivor_model.bev_tokenizer.",
                     "_drivor_model.bev_residual_proposal_refiner.",
+                    "_drivor_model.proposal_world_refiner.",
                     "_drivor_model.future_bev_time_embed",
                 )
 
@@ -532,6 +533,10 @@ class DrivoRAgent(AbstractAgent):
         refiner = getattr(self._drivor_model, "bev_residual_proposal_refiner", None)
         if refiner is not None and isinstance(loss_dict, dict):
             loss_dict["residual_alpha"] = refiner.alpha.detach()
+        proposal_world_refiner = getattr(self._drivor_model, "proposal_world_refiner", None)
+        if proposal_world_refiner is not None and isinstance(loss_dict, dict):
+            loss_dict["proposal_world_refine_gate"] = proposal_world_refiner.refine_gate.detach()
+            loss_dict["proposal_world_score_gate"] = proposal_world_refiner.score_gate.detach()
         return loss_dict
 
     def _collect_trainable_params(self):
@@ -553,6 +558,8 @@ class DrivoRAgent(AbstractAgent):
             if name == "future_bev_time_embed":
                 return True
             if name.startswith("bev_residual_proposal_refiner."):
+                return True
+            if name.startswith("proposal_world_refiner."):
                 return True
             if name.startswith("scorer_attention.layers."):
                 # Strip the "scorer_attention.layers.<i>." prefix to inspect the
