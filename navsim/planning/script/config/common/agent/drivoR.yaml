@@ -108,6 +108,17 @@ config:
   bev_data_split: trainval       # subfolder under bev_features_root; use test for navtest eval
   # load_checkpoint_strict: null  # omit for auto: strict=False when use_bev_feature is true
 
+  ####################
+  # Training-only privileged future BEV oracle.
+  # These tensors are loaded by the target builder from future scene frames and
+  # are never used by the normal inference/submission forward path.
+  use_privileged_future_bev: false
+  future_bev_num_steps: 4
+  future_bev_stride: 1
+  use_future_bev_in_decoder: true
+  use_future_bev_in_scorer: true
+  validate_with_privileged_future_bev: false
+
   bev_tokenizer:
     patch_size: 8                 # 128/8 = 16, initial 256 tokens before pooling
     num_tokens: 64                # adaptive-pool to sqrt(num_tokens)^2 tokens; set null to disable

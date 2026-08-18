@@ -90,15 +90,22 @@ class DrivoRModel(nn.Module):
         self._bev_residual_refiner = self._use_bev and bool(
             config.get("use_bev_residual_proposal_refiner", False)
         )
+        self._use_privileged_future_bev = bool(config.get("use_privileged_future_bev", False))
+        self._future_bev_in_decoder = self._use_privileged_future_bev and bool(
+            config.get("use_future_bev_in_decoder", True)
+        )
+        self._future_bev_in_scorer = self._use_privileged_future_bev and bool(
+            config.get("use_future_bev_in_scorer", True)
+        )
 
         # trajectory decoder (BEV-aware when use_bev_in_decoder is true)
-        if self._bev_in_decoder:
+        if self._bev_in_decoder or self._future_bev_in_decoder:
             self.trajectory_decoder = BevAwareTrajectoryDecoder(proj_drop=0.1, drop_path=0.2, config=config)
         else:
             self.trajectory_decoder = TransformerDecoder(proj_drop=0.1, drop_path=0.2, config=config)
 
         # scorer decoder (BEV-aware when use_bev_in_scorer is true)
-        if self._bev_in_scorer:
+        if self._bev_in_scorer or self._future_bev_in_scorer:
             self.scorer_attention = BevAwareScorer(
                 num_layers=config.scorer_ref_num,
                 d_model=config.tf_d_model,
@@ -137,7 +144,7 @@ class DrivoRModel(nn.Module):
         self.b2d=config.b2d
 
         # Precomputed BEV feature map -> token sequence (scorer-side injection only)
-        if self._use_bev:
+        if self._use_bev or self._use_privileged_future_bev:
             bev_tok_cfg = config.get("bev_tokenizer", {})
 
             def _bt(k, default):
@@ -155,13 +162,39 @@ class DrivoRModel(nn.Module):
                 num_tokens=int(num_tok) if num_tok else None,
                 use_self_attn_block=bool(_bt("use_self_attn_block", False)),
             )
+            future_steps = int(config.get("future_bev_num_steps", 4))
+            self.future_bev_time_embed = nn.Parameter(
+                torch.zeros(1, max(1, future_steps), 1, int(config.tf_d_model))
+            )
+            nn.init.trunc_normal_(self.future_bev_time_embed, std=0.02)
 
     def _zero_bev_batch(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         c = int(self._config.get("bev_channels", 80))
         h, w = self._config.get("bev_spatial_hw", [128, 128])
         return torch.zeros((batch_size, c, int(h), int(w)), device=device, dtype=dtype)
 
-    def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def _tokenize_future_bev(
+        self, future_bev: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
+        if future_bev.dim() == 4:
+            future_bev = future_bev.unsqueeze(0)
+        if future_bev.dim() != 5:
+            raise ValueError(
+                f"privileged_future_bev must have shape (B,K,C,H,W) or (K,C,H,W), got {tuple(future_bev.shape)}"
+            )
+        b, k, c, h, w = future_bev.shape
+        flat = future_bev.float().to(device=device).reshape(b * k, c, h, w)
+        tokens = self.bev_tokenizer(flat)
+        tokens = tokens.reshape(b, k, tokens.shape[1], tokens.shape[2])
+        time_embed = self.future_bev_time_embed[:, :k].to(device=tokens.device, dtype=tokens.dtype)
+        tokens = tokens + time_embed
+        return tokens.reshape(b, k * tokens.shape[2], tokens.shape[3])
+
+    def forward(
+        self,
+        features: Dict[str, torch.Tensor],
+        privileged_future_bev: torch.Tensor = None,
+    ) -> Dict[str, torch.Tensor]:
         
         # ego status and initial traj tokens
         if self._config.full_history_status:
@@ -206,7 +239,7 @@ class DrivoRModel(nn.Module):
         scene_features = torch.cat(scene_features, dim=1)
         log.debug(f"Scene features - {scene_features.shape}")
 
-        # BEV tokens for scorer-side dual cross-attention (optional)
+        # BEV tokens for decoder/scorer cross-attention (optional)
         bev_tokens = None
         if getattr(self, "_use_bev", False):
             if "bev_feature" in features and features["bev_feature"] is not None:
@@ -218,14 +251,34 @@ class DrivoRModel(nn.Module):
             bev_tokens = self.bev_tokenizer(bev)
             log.debug(f"BEV tokens - {bev_tokens.shape}")
 
+        future_bev_tokens = None
+        if (
+            getattr(self, "_use_privileged_future_bev", False)
+            and privileged_future_bev is not None
+        ):
+            future_bev_tokens = self._tokenize_future_bev(privileged_future_bev, dev)
+            log.debug(f"Privileged future BEV tokens - {future_bev_tokens.shape}")
+
+        decoder_bev_tokens = None
+        if getattr(self, "_future_bev_in_decoder", False) and future_bev_tokens is not None:
+            decoder_bev_tokens = future_bev_tokens
+        elif getattr(self, "_bev_in_decoder", False):
+            decoder_bev_tokens = bev_tokens
+
+        scorer_bev_tokens = None
+        if getattr(self, "_future_bev_in_scorer", False) and future_bev_tokens is not None:
+            scorer_bev_tokens = future_bev_tokens
+        elif getattr(self, "_bev_in_scorer", False):
+            scorer_bev_tokens = bev_tokens
+
         # initial trajectories
         proposals = self.traj_head[0](traj_tokens).reshape(traj_tokens.shape[0], -1, self.poses_num, self.state_size)
         proposal_list = [proposals]
         log.debug(f"Proposals initial - {proposals.shape}")
 
         # decode the trajectories at each step of the decoder
-        if getattr(self, "_bev_in_decoder", False):
-            token_list = self.trajectory_decoder(traj_tokens, scene_features, bev_tokens)
+        if decoder_bev_tokens is not None:
+            token_list = self.trajectory_decoder(traj_tokens, scene_features, decoder_bev_tokens)
         else:
             token_list = self.trajectory_decoder(traj_tokens, scene_features)
         log.debug(f"Trajectory decoder - {len(token_list)}")
@@ -259,8 +312,8 @@ class DrivoRModel(nn.Module):
         B,N,_,_=proposals.shape
 
         embedded_traj = self.pos_embed(proposals.reshape(B, N, -1).detach())  # (B, N, d_model)
-        if getattr(self, "_bev_in_scorer", False):
-            tr_out = self.scorer_attention(embedded_traj, scene_features, bev_tokens)  # (B, N, d_model)
+        if scorer_bev_tokens is not None:
+            tr_out = self.scorer_attention(embedded_traj, scene_features, scorer_bev_tokens)  # (B, N, d_model)
         else:
             tr_out = self.scorer_attention(embedded_traj, scene_features)  # (B, N, d_model)
         tr_out = tr_out+ego_token
@@ -290,5 +343,4 @@ class DrivoRModel(nn.Module):
         output["pdm_score"] = pdm_score
 
         return output
-
 

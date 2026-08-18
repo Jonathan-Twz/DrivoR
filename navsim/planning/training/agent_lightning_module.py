@@ -34,6 +34,41 @@ class AgentLightningModule(pl.LightningModule):
         world_size = getattr(trainer, "world_size", 1) if trainer is not None else 1
         return bool(world_size and world_size > 1)
 
+    def _agent_config_flag(self, name: str, default: bool = False) -> bool:
+        config = getattr(self.agent, "_config", None)
+        if config is None:
+            return default
+        try:
+            return bool(config.get(name, default))
+        except Exception:
+            return bool(getattr(config, name, default))
+
+    def _forward_for_batch(
+        self,
+        features: Dict[str, Tensor],
+        targets: Dict[str, Tensor],
+        validation: bool = False,
+    ) -> Dict[str, Tensor]:
+        use_future = self._agent_config_flag("use_privileged_future_bev", False)
+        validate_with_future = self._agent_config_flag("validate_with_privileged_future_bev", False)
+        if use_future and (not validation or validate_with_future) and hasattr(self.agent, "forward_train"):
+            return self.agent.forward_train(features, targets)
+        return self.agent.forward(features)
+
+    def _log_privileged_future_bev_stats(self, targets: Dict[str, Tensor], prefix: str) -> None:
+        valid = targets.get("privileged_future_bev_valid")
+        if valid is None:
+            return
+        valid_float = valid.float()
+        self.log(
+            f"{prefix}/privileged_future_bev_valid_rate",
+            valid_float.mean(),
+            on_step=(prefix == "train"),
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=self._sync_dist(),
+        )
+
     def _step(self, batch: Tuple[Dict[str, Tensor], Dict[str, Tensor]], logging_prefix: str) -> Tensor:
         """
         Propagates the model forward and backwards and computes/logs losses and metrics.
@@ -43,8 +78,9 @@ class AgentLightningModule(pl.LightningModule):
         """
         features, targets = batch
 
-        prediction = self.agent.forward(features)
+        prediction = self._forward_for_batch(features, targets, validation=(logging_prefix == "val"))
         loss_dict = self.agent.compute_loss(features, targets, prediction)
+        self._log_privileged_future_bev_stats(targets, logging_prefix)
 
         if type(loss_dict) is dict:
             sync_dist = self._sync_dist()
@@ -77,7 +113,8 @@ class AgentLightningModule(pl.LightningModule):
         if 'drivor' in self.agent.name() or "DrivoR" in self.agent.name():
             features, targets = batch
             # score,best_score=self.agent.inference(features, targets)
-            predictions = self.agent.forward(features)
+            predictions = self._forward_for_batch(features, targets, validation=True)
+            self._log_privileged_future_bev_stats(targets, "val")
             all_chosen_trajectories = predictions["trajectory"][:,None]
             all_proposed_trajectories = predictions["proposals"]
             final_score, fake_best_score, proposal_scores, l2, trajectoy_scores = self.agent.compute_score(targets, all_chosen_trajectories)

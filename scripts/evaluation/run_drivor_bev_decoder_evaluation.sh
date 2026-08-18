@@ -14,6 +14,7 @@ cd "$DRIVOR_ROOT"
 
 # ENV variables
 export DRIVOR_ROOT
+export PYTHON_BIN="${PYTHON_BIN:-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python}"
 export NUPLAN_MAP_VERSION="nuplan-maps-v1.0"
 export NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps"
 export NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp"
@@ -39,7 +40,7 @@ export SUBSCORE_PATH=$NAVSIM_EXP_ROOT
 DECODER_BEV_LORA_RANK="${DECODER_BEV_LORA_RANK:-16}"
 
 # Hydra treats '=' inside override values as syntax; quote the value for Hydra.
-python "$NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_pdm_score_multi_gpu.py" \
+"$PYTHON_BIN" "$NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_pdm_score_multi_gpu.py" \
         train_test_split=navtest \
         agent=drivoR \
         "agent.checkpoint_path='${CKPT_PATH}'" \

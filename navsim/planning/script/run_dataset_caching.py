@@ -23,6 +23,16 @@ CONFIG_PATH = "config/training"
 CONFIG_NAME = "default_training"
 
 
+def _load_token_filter(token_file: str) -> List[str]:
+    """Load one scene token per line for restricting dataset caching."""
+    token_path = Path(token_file)
+    if not token_path.is_file():
+        raise FileNotFoundError(f"scene_filter_token_file does not exist: {token_path}")
+
+    with open(token_path, "r") as f:
+        return [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]
+
+
 def cache_features(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[Optional[Any]]:
     """
     Helper function to cache features and targets of learnable agent.
@@ -72,6 +82,11 @@ def main(cfg: DictConfig) -> None:
 
     logger.info("Building SceneLoader")
     scene_filter: SceneFilter = instantiate(cfg.train_test_split.scene_filter)
+    token_file = cfg.get("scene_filter_token_file", None)
+    if token_file:
+        scene_filter.tokens = _load_token_filter(token_file)
+        logger.info("Loaded %d scene filter tokens from %s", len(scene_filter.tokens), token_file)
+
     data_path = Path(cfg.navsim_log_path)
     sensor_blobs_path = Path(cfg.sensor_blobs_path)
     scene_loader = SceneLoader(

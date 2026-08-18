@@ -328,13 +328,15 @@ class DrivoRTargetBuilder(AbstractTargetBuilder):
                 trajectory_long = np.stack(traj_, axis=1)
 
                 trajectory_long = torch.tensor(trajectory_long)
-                return {
+                targets = {
                     "trajectory": trajectory,
                     "trajectory_long": trajectory_long,
                     "token":scene.scene_metadata.initial_token
                 }
+                self._attach_privileged_future_bev(targets, scene)
+                return targets
             except:
-                return {
+                targets = {
                     "trajectory": trajectory,
                     "trajectory_long": trajectory,
                     # "agent_states": agent_states,
@@ -342,15 +344,102 @@ class DrivoRTargetBuilder(AbstractTargetBuilder):
                     # "bev_semantic_map": bev_semantic_map,
                     "token":scene.scene_metadata.initial_token
                 }
+                self._attach_privileged_future_bev(targets, scene)
+                return targets
         else:
 
-            return {
+            targets = {
                 "trajectory": trajectory,
                 # "agent_states": agent_states,
                 # "agent_labels": agent_labels,
                 # "bev_semantic_map": bev_semantic_map,
                 "token":scene.scene_metadata.initial_token
             }
+            self._attach_privileged_future_bev(targets, scene)
+            return targets
+
+    def _bev_suffix(self) -> str:
+        t = self._config.get("bev_feature_type", "vtransform")
+        if t == "decoder_neck":
+            return "decoder_neck"
+        return "vtransform"
+
+    def _bev_file_path(self, scene_token: str, log_name: str) -> Path:
+        root = Path(self._config.get("bev_features_root", ""))
+        split = self._config.get("bev_data_split", "trainval")
+        return root / split / log_name / f"{scene_token}_{self._bev_suffix()}.pt"
+
+    def _empty_bev_tensor(self) -> torch.Tensor:
+        c = int(self._config.get("bev_channels", 80))
+        h, w = self._config.get("bev_spatial_hw", [128, 128])
+        return torch.zeros((c, int(h), int(w)), dtype=torch.float32)
+
+    def _normalize_bev_tensor(self, bev: torch.Tensor, path: Optional[Path] = None) -> torch.Tensor:
+        bev = bev.float()
+        if bev.dim() == 4 and bev.shape[0] == 1:
+            bev = bev.squeeze(0)
+        if bev.dim() != 3:
+            source = f" from {path}" if path is not None else ""
+            logger.warning(
+                "Privileged future BEV tensor%s has unsupported shape %s; using zeros.",
+                source,
+                tuple(bev.shape),
+            )
+            return self._empty_bev_tensor()
+        expected_channels = int(self._config.get("bev_channels", bev.shape[0]))
+        if bev.shape[0] != expected_channels:
+            source = f" from {path}" if path is not None else ""
+            logger.warning(
+                "Privileged future BEV tensor%s has %d channels, expected %d; using zeros.",
+                source,
+                bev.shape[0],
+                expected_channels,
+            )
+            return self._empty_bev_tensor()
+        return bev
+
+    def _load_bev_tensor(self, scene_token: str, log_name: str) -> Tuple[torch.Tensor, bool]:
+        path = self._bev_file_path(scene_token, log_name)
+        if not path.is_file():
+            return self._empty_bev_tensor(), False
+        try:
+            bev = torch.load(path, map_location="cpu")
+            if not isinstance(bev, torch.Tensor):
+                logger.warning("Privileged future BEV file %s is not a tensor; using zeros.", path)
+                return self._empty_bev_tensor(), False
+            return self._normalize_bev_tensor(bev, path), True
+        except Exception as e:
+            logger.warning("Failed to load privileged future BEV %s: %s; using zeros.", path, e)
+            return self._empty_bev_tensor(), False
+
+    def _attach_privileged_future_bev(self, targets: Dict[str, torch.Tensor], scene: Scene) -> None:
+        if not self._config.get("use_privileged_future_bev", False):
+            return
+
+        num_steps = int(self._config.get("future_bev_num_steps", 4))
+        stride = int(self._config.get("future_bev_stride", 1))
+        if num_steps <= 0:
+            return
+
+        metadata = scene.scene_metadata
+        current_idx = int(metadata.num_history_frames) - 1
+        log_name = metadata.log_name
+
+        future_bevs = []
+        valid = []
+        for step in range(1, num_steps + 1):
+            frame_idx = current_idx + step * stride
+            if frame_idx >= len(scene.frames):
+                future_bevs.append(self._empty_bev_tensor())
+                valid.append(False)
+                continue
+            token = scene.frames[frame_idx].token
+            bev, ok = self._load_bev_tensor(token, log_name)
+            future_bevs.append(bev)
+            valid.append(ok)
+
+        targets["privileged_future_bev"] = torch.stack(future_bevs, dim=0)
+        targets["privileged_future_bev_valid"] = torch.tensor(valid, dtype=torch.bool)
 
     def _compute_agent_targets(self, annotations: Annotations) -> Tuple[torch.Tensor, torch.Tensor]:
         """

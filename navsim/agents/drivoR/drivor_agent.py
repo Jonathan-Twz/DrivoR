@@ -1,5 +1,7 @@
 from typing import Any, List, Dict, Union
 
+import csv
+import glob
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -7,10 +9,11 @@ import torch.nn as nn
 import os
 from pathlib import Path
 import pickle
+import subprocess
 from .drivor_model import DrivoRModel
 from navsim.agents.abstract_agent import AbstractAgent
 from navsim.planning.training.dataset import load_feature_target_from_pickle
-from pytorch_lightning.callbacks import ModelCheckpoint, ProgressBar, LearningRateMonitor
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint, ProgressBar, LearningRateMonitor
 from navsim.common.dataloader import MetricCacheLoader
 from navsim.common.dataclasses import SensorConfig
 from .drivor_features import DrivoRTargetBuilder
@@ -108,6 +111,170 @@ class LitProgressBar(ProgressBar):
             self._val_pbar.close()
             self._val_pbar = None
 
+
+class NavsimV1PDMSEvalCallback(Callback):
+    """Runs the official NAVSIM-v1 PDMS evaluator after validation epochs."""
+
+    def __init__(self):
+        self.enabled = os.environ.get("DRIVOR_EPOCH_PDMS_EVAL", "0") == "1"
+        self.every_n_epochs = max(1, int(os.environ.get("DRIVOR_EPOCH_PDMS_EVERY_N_EPOCHS", "1")))
+        self.log_prefix = os.environ.get("DRIVOR_EPOCH_PDMS_LOG_PREFIX", "test").strip("/")
+        self.timeout_sec = int(os.environ.get("DRIVOR_EPOCH_PDMS_TIMEOUT_SEC", "7200"))
+        self.drivor_root = Path(os.environ.get("DRIVOR_ROOT", Path(__file__).resolve().parents[3]))
+        self.script_path = Path(
+            os.environ.get(
+                "DRIVOR_EPOCH_PDMS_SCRIPT",
+                self.drivor_root / "scripts/evaluation/run_drivor_bev_decoder_evaluation.sh",
+            )
+        )
+        self.cuda_visible_devices = os.environ.get(
+            "DRIVOR_EPOCH_PDMS_CUDA_VISIBLE_DEVICES",
+            os.environ.get("CUDA_VISIBLE_DEVICES", "0,1,2,3"),
+        )
+        self.decoder_bev_lora_rank = os.environ.get(
+            "DRIVOR_EPOCH_PDMS_DECODER_BEV_LORA_RANK",
+            os.environ.get("DECODER_BEV_LORA_RANK", ""),
+        )
+
+    @staticmethod
+    def _dist_ready() -> bool:
+        return torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    @staticmethod
+    def _is_number(value: str) -> bool:
+        try:
+            float(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _find_latest_csv(self, experiment_name: str) -> Path:
+        navsim_exp_root = Path(os.environ.get("NAVSIM_EXP_ROOT", self.drivor_root / "exp"))
+        candidates = glob.glob(str(navsim_exp_root / "ke" / experiment_name / "**" / "*.csv"), recursive=True)
+        candidates += glob.glob(str(navsim_exp_root / "navsim1_pdm_scores" / experiment_name / "**" / "*.csv"), recursive=True)
+        if not candidates:
+            raise FileNotFoundError(f"No NAVSIM-v1 PDMS csv found for experiment {experiment_name}")
+        return Path(max(candidates, key=os.path.getmtime))
+
+    def _read_average_metrics(self, csv_path: Path) -> Dict[str, float]:
+        with csv_path.open(newline="") as f:
+            rows = list(csv.DictReader(f))
+        if not rows:
+            raise RuntimeError(f"PDMS csv is empty: {csv_path}")
+
+        average_row = next((row for row in rows if row.get("token") == "average"), rows[-1])
+        metrics = {}
+        for key, value in average_row.items():
+            if key in {"", "token", "valid"} or not self._is_number(value):
+                continue
+            metric_key = "pdms" if key == "score" else key
+            metrics[f"{self.log_prefix}/{metric_key}"] = float(value)
+        return metrics
+
+    def _log_metrics(self, trainer, metrics: Dict[str, float]) -> None:
+        if not metrics:
+            return
+        logger = getattr(trainer, "logger", None)
+        if logger:
+            logger.log_metrics(metrics, step=trainer.global_step)
+        print("NAVSIM-v1 PDMS epoch metrics:")
+        for key, value in sorted(metrics.items()):
+            print(f"{key},{value:.6f}")
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if not self.enabled or getattr(trainer, "sanity_checking", False):
+            return
+
+        epoch = int(trainer.current_epoch)
+        should_run = (epoch + 1) % self.every_n_epochs == 0
+        if not should_run:
+            return
+
+        is_rank_zero = getattr(trainer, "is_global_zero", True)
+        try:
+            if is_rank_zero:
+                try:
+                    self._run_eval_and_log(trainer)
+                except Exception as exc:
+                    self._log_metrics(
+                        trainer,
+                        {
+                            f"{self.log_prefix}/pdms_eval_failed": 1.0,
+                            f"{self.log_prefix}/epoch": float(epoch),
+                        },
+                    )
+                    print(f"NAVSIM-v1 PDMS eval failed with exception: {exc}")
+        finally:
+            if self._dist_ready():
+                torch.distributed.barrier()
+
+    def _run_eval_and_log(self, trainer) -> None:
+        if not self.script_path.exists():
+            raise FileNotFoundError(f"NAVSIM-v1 PDMS script does not exist: {self.script_path}")
+
+        epoch = int(trainer.current_epoch)
+        global_step = int(trainer.global_step)
+        output_root = Path(os.environ.get("DRIVOR_TRAIN_OUTPUT_DIR", getattr(trainer, "default_root_dir", ".")))
+        checkpoint_dir = output_root / "checkpoints" / "epoch_pdms"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = checkpoint_dir / f"epoch={epoch:02d}-step={global_step}.ckpt"
+        trainer.save_checkpoint(str(checkpoint_path))
+
+        base_name = os.environ.get("DRIVOR_EPOCH_PDMS_EXPERIMENT_PREFIX")
+        if not base_name:
+            base_name = os.environ.get("WANDB_RUN_NAME", os.environ.get("EXPERIMENT", "drivor-epoch-pdms"))
+        eval_name = f"{base_name.replace('/', '_')}-epoch{epoch:02d}-step{global_step}-navsim-v1-pdms"
+
+        log_dir = output_root / "pdms_eval"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"epoch={epoch:02d}-step={global_step}.log"
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "CKPT_PATH": str(checkpoint_path),
+                "EXPERIMENT_NAME": eval_name,
+                "CUDA_VISIBLE_DEVICES": self.cuda_visible_devices,
+                "DRIVOR_EPOCH_PDMS_EVAL": "0",
+                "PYTHON_BIN": sys.executable,
+            }
+        )
+        if self.decoder_bev_lora_rank:
+            env["DECODER_BEV_LORA_RANK"] = self.decoder_bev_lora_rank
+
+        print(
+            f"Running NAVSIM-v1 PDMS eval for epoch {epoch} step {global_step}: "
+            f"{self.script_path} -> {log_path}"
+        )
+        with log_path.open("w") as log_file:
+            result = subprocess.run(
+                ["bash", str(self.script_path)],
+                cwd=str(self.drivor_root),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                timeout=self.timeout_sec,
+                check=False,
+            )
+
+        if result.returncode != 0:
+            self._log_metrics(
+                trainer,
+                {
+                    f"{self.log_prefix}/pdms_eval_failed": 1.0,
+                    f"{self.log_prefix}/epoch": float(epoch),
+                },
+            )
+            print(f"NAVSIM-v1 PDMS eval failed with code {result.returncode}; see {log_path}")
+            return
+
+        csv_path = self._find_latest_csv(eval_name)
+        metrics = self._read_average_metrics(csv_path)
+        metrics[f"{self.log_prefix}/epoch"] = float(epoch)
+        metrics[f"{self.log_prefix}/pdms_eval_failed"] = 0.0
+        self._log_metrics(trainer, metrics)
+
+
 class DrivoRAgent(AbstractAgent):
     def __init__(
             self,
@@ -201,7 +368,8 @@ class DrivoRAgent(AbstractAgent):
 
             strict_override = self._config.get("load_checkpoint_strict", None)
             use_bev = bool(self._config.get("use_bev_feature", False))
-            strict = bool(strict_override) if strict_override is not None else (not use_bev)
+            use_future_bev = bool(self._config.get("use_privileged_future_bev", False))
+            strict = bool(strict_override) if strict_override is not None else (not (use_bev or use_future_bev))
 
             missing, unexpected = self.load_state_dict(mapped, strict=strict)
 
@@ -212,6 +380,7 @@ class DrivoRAgent(AbstractAgent):
                 expected_missing_prefixes = (
                     "_drivor_model.bev_tokenizer.",
                     "_drivor_model.bev_residual_proposal_refiner.",
+                    "_drivor_model.future_bev_time_embed",
                 )
 
                 def _is_expected_missing(name: str) -> bool:
@@ -292,6 +461,22 @@ class DrivoRAgent(AbstractAgent):
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return self._drivor_model(features)
 
+    def forward_train(
+            self,
+            features: Dict[str, torch.Tensor],
+            targets: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        privileged_future_bev = None
+        if bool(self._config.get("use_privileged_future_bev", False)):
+            privileged_future_bev = targets.get("privileged_future_bev", None)
+            if privileged_future_bev is None:
+                raise KeyError(
+                    "agent.config.use_privileged_future_bev=true but targets do not contain "
+                    "'privileged_future_bev'. Rebuild the dataset cache with the same config or "
+                    "run with use_cache_without_dataset=false."
+                )
+        return self._drivor_model(features, privileged_future_bev=privileged_future_bev)
+
     def compute_score(self, targets, proposals, test=True):
         if self.training:
             metric_cache_paths = self.train_metric_cache_paths
@@ -364,6 +549,8 @@ class DrivoRAgent(AbstractAgent):
 
         def _is_trainable(name: str) -> bool:
             if name.startswith("bev_tokenizer."):
+                return True
+            if name == "future_bev_time_embed":
                 return True
             if name.startswith("bev_residual_proposal_refiner."):
                 return True
@@ -466,7 +653,7 @@ class DrivoRAgent(AbstractAgent):
         if train_output_dir:
             checkpoint_dir = str(Path(train_output_dir) / "checkpoints")
 
-        checkpoint_cb_best = ModelCheckpoint(save_top_k=1,
+        checkpoint_cb_best = ModelCheckpoint(save_top_k=5,
                                         monitor='val/score_epoch',
                                         filename='best-{epoch}-{step}',
                                         mode="max",
@@ -478,9 +665,13 @@ class DrivoRAgent(AbstractAgent):
         lr_monitor = LearningRateMonitor(logging_interval="step", 
                                             log_momentum=False,
                                             log_weight_decay=False)
+        callbacks = [checkpoint_cb_best, checkpoint_cb]
+        epoch_pdms_eval = NavsimV1PDMSEvalCallback()
+        if epoch_pdms_eval.enabled:
+            callbacks.append(epoch_pdms_eval)
         
         if self.progress_bar:
-            return [checkpoint_cb_best, checkpoint_cb, lr_monitor]
+            return callbacks + [lr_monitor]
         else:
             progress_bar = LitProgressBar()
-            return [checkpoint_cb_best, checkpoint_cb, progress_bar, lr_monitor]
+            return callbacks + [progress_bar, lr_monitor]
