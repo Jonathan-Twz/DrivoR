@@ -183,6 +183,19 @@ def shared_pca_rgb(current: np.ndarray, futures: np.ndarray) -> tuple[np.ndarray
     return rgb[0], rgb[1:]
 
 
+def shared_pca_scalar(
+    current: np.ndarray, futures: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Project current and future tokens onto one shared PC1 and color range."""
+    stacked = np.concatenate([current[None], futures], axis=0)
+    flat = stacked.reshape(-1, stacked.shape[-1]).astype(np.float64)
+    flat -= flat.mean(axis=0, keepdims=True)
+    _, _, vh = np.linalg.svd(flat, full_matrices=False)
+    projected = (flat @ vh[0]).reshape(stacked.shape[0], 8, 8).astype(np.float32)
+    limit = float(np.percentile(np.abs(projected), 99.0))
+    return projected[0], projected[1:], max(limit, 1e-8)
+
+
 def feature_map_pca_rgb(feature_chw: np.ndarray) -> np.ndarray:
     """Project one CxHxW feature map to RGB without implying semantic channels."""
     channels, height, width = feature_chw.shape
@@ -217,6 +230,14 @@ def upsample_scalar(values: np.ndarray, size: int = 128) -> np.ndarray:
     upsampled = F.interpolate(
         tensor, size=(size, size), mode="bicubic", align_corners=False
     ).clamp_min(0)
+    return upsampled[0, 0].numpy()
+
+
+def upsample_signed_scalar(values: np.ndarray, size: int = 128) -> np.ndarray:
+    tensor = torch.from_numpy(values).unsqueeze(0).unsqueeze(0)
+    upsampled = F.interpolate(
+        tensor, size=(size, size), mode="bicubic", align_corners=False
+    )
     return upsampled[0, 0].numpy()
 
 
@@ -449,8 +470,8 @@ def plot_requested_candidates(
     futures = data["future_tokens"]
     proposals = data["base_proposals"]
     scores = data["scores"]
-    _, future_rgb = shared_pca_rgb(current, futures)
-    raw_rgb = feature_map_pca_rgb(data["raw_bev"])
+    current_pc1, future_pc1, pc1_limit = shared_pca_scalar(current, futures)
+    current_display = upsample_signed_scalar(current_pc1)
     colors = ["#E76F51", "#2A9D8F", "#7B61A8", "#3A86C8", "#D4A017"]
     reference = selected[0]
     differences = {
@@ -499,19 +520,31 @@ def plot_requested_candidates(
     fig = plt.figure(figsize=(20, 9.3))
     grid = fig.add_gridspec(2, 6, width_ratios=[1.35, 1, 1, 1, 1, 1])
     current_axis = fig.add_subplot(grid[0, 0])
-    current_axis.imshow(raw_rgb, interpolation="bilinear")
+    pc1_image = current_axis.imshow(
+        current_display,
+        cmap="RdBu_r",
+        vmin=-pc1_limit,
+        vmax=pc1_limit,
+        interpolation="bilinear",
+    )
     draw_trajectories(current_axis, annotate=False)
     current_axis.set_xticks([])
     current_axis.set_yticks([])
     current_axis.set_title(
-        "Current BEV + trajectories\n128×128 native orientation",
+        "Current BEV tokens + trajectories\nshared PC1 · 8×8 → 128×128",
         fontsize=12,
         fontweight="bold",
     )
     current_axis.legend(loc="upper left", fontsize=7.5, framealpha=0.88)
 
     zoom_axis = fig.add_subplot(grid[1, 0])
-    zoom_axis.imshow(raw_rgb, interpolation="bilinear")
+    zoom_axis.imshow(
+        current_display,
+        cmap="RdBu_r",
+        vmin=-pc1_limit,
+        vmax=pc1_limit,
+        interpolation="bilinear",
+    )
     draw_trajectories(zoom_axis, annotate=True)
     x_left = (-2.0 + 51.2) / 102.4 * 127.0
     x_right = (20.0 + 51.2) / 102.4 * 127.0
@@ -522,13 +555,21 @@ def plot_requested_candidates(
     zoom_axis.set_aspect("auto")
     zoom_axis.set_xticks([])
     zoom_axis.set_yticks([])
-    zoom_axis.set_title("Same current BEV · trajectory crop", fontsize=11, fontweight="bold")
+    zoom_axis.set_title(
+        "Same tokenized current BEV · crop", fontsize=11, fontweight="bold"
+    )
 
     difference_axes = []
     difference_image = None
     for column, (color, index) in enumerate(zip(colors, selected), start=1):
         imagined_axis = fig.add_subplot(grid[0, column])
-        imagined_axis.imshow(upsample_rgb(future_rgb[index]), interpolation="bilinear")
+        imagined_axis.imshow(
+            upsample_signed_scalar(future_pc1[index]),
+            cmap="RdBu_r",
+            vmin=-pc1_limit,
+            vmax=pc1_limit,
+            interpolation="bilinear",
+        )
         imagined_axis.set_title(
             f"Proposal #{index}\nscore={scores[index]:.3f}",
             fontsize=12,
@@ -559,6 +600,13 @@ def plot_requested_candidates(
         difference_axis.set_yticks([])
         difference_axes.append(difference_axis)
 
+    pc1_colorbar_axis = fig.add_axes([0.965, 0.57, 0.012, 0.28])
+    fig.colorbar(
+        pc1_image,
+        cax=pc1_colorbar_axis,
+        orientation="vertical",
+        label="Shared token-feature PC1 value",
+    )
     if difference_image is not None:
         colorbar_axis = fig.add_axes([0.965, 0.19, 0.012, 0.28])
         fig.colorbar(
@@ -580,7 +628,7 @@ def plot_requested_candidates(
     fig.text(
         0.5,
         0.035,
-        "Top: shared-PCA imagined features in the same native orientation as the earlier plot. Bottom: amplified differences prove the tensors are close, not identical.",
+        "Top: tokenized current and imagined BEVs use one PC1 basis and one colorbar. Bottom: amplified differences show the small proposal-specific residuals.",
         ha="center",
         fontsize=10.5,
         color="#5E6A72",

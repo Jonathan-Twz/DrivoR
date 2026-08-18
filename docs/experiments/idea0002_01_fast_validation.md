@@ -92,7 +92,7 @@ The final proposal-world checkpoint (`best-epoch=3-step=64.ckpt`) was inspected 
 
 ![Selected proposals 31, 37, 62, 1, and 6 over the current BEV with imagined rollouts](../figures/idea0002_01/rollouts/d973628ca1235533_proposals_31_37_62_1_6.png)
 
-The selected-proposal verification preserves the same native current-BEV orientation as the resolution figure; its lower-left panel is only a crop of that tensor. Relative to proposal 31, proposals 37, 62, 1, and 6 have latent RMS differences of `0.01021`, `0.00938`, `0.00779`, and `0.00787`. Their cosine similarities exceed `0.99994`, confirming that the outputs are numerically distinct but nearly collapsed rather than accidentally duplicated.
+The selected-proposal verification compares the tokenized current BEV and all imagined BEVs using one shared PC1 basis and symmetric color range. This is required because the raw exported `128x128` feature and the post-tokenizer future features occupy different learned spaces. Relative to proposal 31, proposals 37, 62, 1, and 6 have latent RMS differences of `0.01021`, `0.00938`, `0.00779`, and `0.00787`. Their cosine similarities exceed `0.99994`, confirming that the outputs are numerically distinct but nearly collapsed rather than accidentally duplicated.
 
 - Mean current-to-future latent RMS: `0.569474`
 - Mean pairwise RMS across candidate futures: `0.005400`
