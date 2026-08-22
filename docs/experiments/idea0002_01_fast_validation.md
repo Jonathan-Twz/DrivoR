@@ -112,6 +112,66 @@ The proposal-world module is parameter-matched but costs about 9.95x the isolate
 
 These small-subset results are a hypothesis screen, not official NAVSIM PDMS/EPDMS evidence. A positive result should be followed by a larger controlled run and official NAVSIM evaluation.
 
+## Full-Scale Nonzero-Gate Follow-up
+
+The zero-gate screen motivated a full-data follow-up with both proposal-world output gates initialized to `0.01`. This is an active training run; the numbers below are an interim snapshot from **2026-08-22 03:06 EDT**, not final NAVSIM results.
+
+### Reproducible setup
+
+- Host: `purrgil.engin.umich.edu`; 8 A100-SXM4-80GB GPUs (`CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`)
+- Launcher: `scripts/training/run_drivor_idea0002_01_full_8gpu.sh`
+- Source revision logged at launch: `7267d33`; branch `exp/idea-0002-01-wote-fast-validation`
+- Pretrained baseline: `weights/checkpoints/drivor_Nav1_25epochs.pth`; load audit reported 58 expected new-module keys and no unexpected missing or unexpected keys
+- Dataset: full cached split, 125,482 training samples and 26,296 validation samples
+- Per-rank batch: 4; 8 ranks; gradient accumulation: 2; global forward batch: 32; effective optimizer batch: 64
+- DataLoader: 4 workers per rank (32 total), prefetch factor 1
+- Training: 30 epochs, 3,921 forward batches and approximately 1,961 optimizer updates per epoch, bf16 mixed precision
+- Optimizer: AdamW; configured base LR `1e-4`, effective batch-scaled LR `7.071e-5`
+- Scheduler: 10% linear warmup followed by cosine decay; `dataset_size=62741` accounts for two-way gradient accumulation and gives 58,830 scheduled optimizer updates
+- Proposal world: 2 Transformer layers, 4 heads, FFN width 512, one rollout step, proposal chunk size 8
+- Gates: refine `0.01`, score `0.01`; trainable parameters remain the BEV tokenizer and proposal-world modules (about 6.1M)
+- W&B: project `drivor-world-model`, run [`xpdaydqh`](https://wandb.ai/jonathan-twz/drivor-world-model/runs/xpdaydqh)
+- Output: `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache`
+
+### Cache repair and integrity
+
+The first full launch exposed one corrupt gzip cache entry, token `fa6bbdbd03325e34`. Its original payload was retained with suffix `.corrupt-before-recache-20260818`, the sample was recached, and both feature and target files then passed gzip and pickle loading. A complete post-repair scan finished on 2026-08-19:
+
+- 303,556 files, 5,449,670,477,948 bytes (5,075.40 GiB)
+- 0 integrity failures
+- 109,646 seconds (about 30 h 27 min)
+- Report: `exp/cache_integrity/20260818_1511/report.json`
+
+### Interim metrics
+
+| Epoch | `train/loss_epoch` | `val/score_epoch` | `val/l2` | Score hit | Top-5 hit | Refine gate end | Score gate end |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1.49127 | 0.916648 | 0.610898 | 0.05926 | 0.21175 | 0.02433 | 0.03674 |
+| 1 | 1.45593 | 0.916404 | 0.601922 | 0.05470 | 0.19888 | 0.03369 | 0.05514 |
+| 2 | 1.45367 | 0.915665 | 0.620379 | 0.05215 | 0.19671 | 0.03762 | 0.06875 |
+| 3 | 1.44284 | **0.917410** | 0.615268 | 0.05934 | 0.21365 | 0.04209 | 0.08123 |
+| 4 | 1.43679 | 0.916974 | 0.622711 | 0.05321 | 0.20006 | 0.04588 | 0.09218 |
+
+At the snapshot, epoch 5 training was 91% complete (`3579/3921`). Its latest logged gates were approximately `0.0486` and `0.1015`. W&B history contained no NaN/Inf values and no rates outside `[0, 1]`. Negative `train/inter_loss` and `train/inter_loss0` are expected because the diversity diagnostic is implemented as negative minimum distance and has zero training weight in this configuration.
+
+The gates now move decisively away from initialization, so the zero-gate gradient-starvation failure is resolved. However, the best validation score through epoch 4 is only `0.917410` at epoch 3, and L2 plus proposal-selection hit rates do not show a consistent improvement. This is currently evidence that the module is active, not evidence that it improves planning. Official NAVSIM-v1 PDMS and NAVSIM-v2 EPDMS must wait for checkpoint evaluation; validation score is only a proxy.
+
+`val/score_error` should not be interpreted as calibrated score error: it compares a log-domain `pdm_score` target against a linear proposal score. The logged `privileged_future_bev_valid_rate=0.79344` describes fields present in cached targets; `use_privileged_future_bev=false` means those fields are not passed into the model.
+
+### Throughput and next decision
+
+| Epoch | Train wall time | Validation wall time |
+|---:|---:|---:|
+| 0 | 17:55:15 | 03:12:39 |
+| 1 | 16:07:18 | 02:15:55 |
+| 2 | 12:58:29 | 02:16:35 |
+| 3 | 12:58:31 | 02:16:20 |
+| 4 | 12:42:18 | 02:16:09 |
+
+The stabilized cost is roughly 15 hours per train-plus-validation epoch, implying about 19 days for 30 epochs if load and contention remain unchanged. The primary bottleneck is cache I/O and CPU deserialization, not GPU memory. A representative target contains an unused `privileged_future_bev` tensor of shape `(4,256,128,128)`, about 64 MiB uncompressed and roughly 62% of compressed sample I/O. A future cache-slimming pass can hardlink feature files and rewrite target payloads without these unused fields, but it should not interrupt this run.
+
+Changing to per-rank batch 8 alone is not a strong reason to restart: preserve effective batch 64 with accumulation 1, explicit LR `7.071e-5`, and scheduler dataset size 125,482, then benchmark first. The measured break-even from the completed work was only about a 6.8% epoch speedup. Higher-impact follow-ups are a slim-cache benchmark, exclusive GPU allocation, and a purrgil-specific NCCL P2P benchmark; worker count is already 32 total and should not be increased blindly.
+
 Regenerate the paired JSON/CSV summary and curves with:
 
 ```bash

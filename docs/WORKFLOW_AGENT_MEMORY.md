@@ -162,6 +162,20 @@
   - 旧泛用 cache（schema 不一定匹配）：`exp/navsim_cache_nommcv_full`
   - 训练匹配 cache：`exp/navsim_cache_nommcv_same_as_training`
 
+### Proposal-world 全量 cache 与 8-GPU 训练（2026-08）
+
+- **入口**：`scripts/training/run_drivor_idea0002_01_full_8gpu.sh`。内层 `run_drivor_idea0002_01_fast.sh` 现在支持 `FULL_DATASET=1`，此时不生成或传入固定 token 子集。
+- **当前全量配置**：8 GPU、每 rank batch 4、每 rank 4 个 DataLoader workers、prefetch 1、梯度累积 2、bf16、30 epochs。这里 `NUM_WORKERS=4` 是**每 GPU**，总计 32 workers；全局 forward batch 为 32，有效 optimizer batch 为 64。
+- **LR / scheduler 对齐**：base LR `1e-4` 经 batch 缩放后实际为 `7.071e-5`。梯度累积为 2 时，launcher 传 `SCHEDULER_DATASET_SIZE=62741`，对应每 epoch 约 1,961 次 optimizer update 和 30 epochs 共 58,830 个 scheduler steps。
+- **当前 run**：`Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache`，W&B project `drivor-world-model`，run id `xpdaydqh`。refine/score gate 均从 `0.01` 初始化。
+- **完整性修复**：token `fa6bbdbd03325e34` 的 gzip cache 损坏；保留 `.corrupt-before-recache-20260818` 备份后单独 recache。随后全量扫描 303,556 files / 5,075.40 GiB，0 failures；报告在 `exp/cache_integrity/20260818_1511/report.json`。
+- **性能实测**：扫描结束后的稳定阶段约 12 h 42 min 至 12 h 59 min/train epoch，约 2 h 16 min/validation epoch。该 workload 主要受 NFS cache I/O 和 CPU gzip/pickle 解码限制。
+- **payload 膨胀**：即使 `use_privileged_future_bev=false`，cache target 仍会反序列化 `privileged_future_bev`。代表样本中该张量为 `(4,256,128,128)`，约 64 MiB uncompressed，并占约 62% compressed sample I/O；它被记录 valid rate，但未传入 agent forward，不构成 future-information leakage。
+- **slim-cache 可行方案**：新建 cache tree，feature 文件使用 hardlink；target 用 gzip/pickle 结构化读取后删除 `privileged_future_bev` 及 valid 字段，再原子写入。先对一小批样本做 prediction/metric parity，再全量转换。预计转换本身约 19-30 h；purrgil `/tmp` 仅约 124 GB 可用，不能放完整 slim cache，需写共享 NFS。
+- **不要因 batch 8 直接重启**：若 benchmark batch 8，应使用 accumulation 1、显式 LR `7.071e-5`、`SCHEDULER_DATASET_SIZE=125482`，保持 effective batch 和 scheduler update 数一致。已有估算要求至少约 6.8%/epoch 加速才抵消重启损失；I/O-bound 时收益可能不足。
+- **优先加速项**：先确保 GPU 独占；在 purrgil 单独 benchmark `NCCL_P2P_DISABLE=0`（8 卡拓扑均为 NVLink），但不要把 guppy 的 transport workaround 全局删除；不要盲增 workers，当前已经是 32 个 worker 并发读共享 cache。
+- **指标判断**：负的 `train/inter_loss{,0}` 是 `-min distance` diversity diagnostic，且当前权重为 0，属于预期；`val/score_error` 混合 log-domain PDM target 与 linear proposal score，不能当 calibration error；官方结论必须来自 top-k checkpoint 的 NAVSIM-v1 PDMS / NAVSIM-v2 EPDMS，而不是只看 `val/score_epoch`。
+
 ## NAVSIM v2 评测（navhard_two_stage / EPDMS）
 
 - **不要用 DrivoR 自带的 v1 脚本评 v2**。v2 在官方仓库 `wenzhet/navsim` 里跑 `run_pdm_score.py`；DrivoR 里只有 v1 的 `run_pdm_score_multi_gpu.py`。
