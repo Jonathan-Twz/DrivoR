@@ -51,6 +51,7 @@ TOKEN_SOURCE_FILE="${TOKEN_SOURCE_FILE:-$REFERENCE_ROOT/exp/bev_feature_tokens/t
 TOKEN_COUNT="${TOKEN_COUNT:-2048}"
 TOKEN_SEED="${TOKEN_SEED:-2}"
 FIXED_TOKEN_FILE="${FIXED_TOKEN_FILE:-$REFERENCE_ROOT/exp/idea0002_fast/fixed_tokens_seed${TOKEN_SEED}_n${TOKEN_COUNT}.txt}"
+FULL_DATASET="${FULL_DATASET:-0}"
 
 NUM_GPUS="${NUM_GPUS:-1}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
@@ -62,6 +63,7 @@ LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-16}"
 ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-4}"
 LOG_EVERY_N_STEPS="${LOG_EVERY_N_STEPS:-1}"
 BASE_LR="${BASE_LR:-1e-4}"
+SCHEDULER_DATASET_SIZE="${SCHEDULER_DATASET_SIZE:-85000}"
 WANDB_PROJECT="${WANDB_PROJECT:-drivor-world-model-fast-validation}"
 USE_WANDB="${USE_WANDB:-1}"
 
@@ -90,11 +92,18 @@ if [[ ! -d "$CACHE_PATH" ]]; then
   exit 1
 fi
 
-"$PYTHON_BIN" "$SCRIPT_DIR/build_fixed_token_subset.py" \
-  --source "$TOKEN_SOURCE_FILE" \
-  --output "$FIXED_TOKEN_FILE" \
-  --count "$TOKEN_COUNT" \
-  --seed "$TOKEN_SEED"
+TOKEN_OVERRIDES=()
+if [[ "$FULL_DATASET" == "1" ]]; then
+  DATASET_DESCRIPTION="full cached trainval split"
+else
+  "$PYTHON_BIN" "$SCRIPT_DIR/build_fixed_token_subset.py" \
+    --source "$TOKEN_SOURCE_FILE" \
+    --output "$FIXED_TOKEN_FILE" \
+    --count "$TOKEN_COUNT" \
+    --seed "$TOKEN_SEED"
+  TOKEN_OVERRIDES+=(+scene_filter_token_file="$FIXED_TOKEN_FILE")
+  DATASET_DESCRIPTION="$FIXED_TOKEN_FILE ($TOKEN_COUNT, seed=$TOKEN_SEED)"
+fi
 
 OUTPUT_DIR="$NAVSIM_EXP_ROOT/ke/$EXPERIMENT/$EXPERIMENT_UID"
 mkdir -p "$OUTPUT_DIR"
@@ -111,11 +120,12 @@ echo "Code branch    : $(git -C "$DRIVOR_ROOT" branch --show-current)"
 echo "Code commit    : $(git -C "$DRIVOR_ROOT" rev-parse HEAD)"
 echo "Experiment     : $EXPERIMENT/$EXPERIMENT_UID"
 echo "Variant        : $VARIANT"
-echo "Fixed tokens   : $FIXED_TOKEN_FILE ($TOKEN_COUNT, seed=$TOKEN_SEED)"
+echo "Dataset        : $DATASET_DESCRIPTION"
 echo "Training       : epochs=$MAX_EPOCHS batches=$LIMIT_TRAIN_BATCHES val_batches=$LIMIT_VAL_BATCHES"
 echo "GPU/batch      : devices=$CUDA_VISIBLE_DEVICES batch=$BATCH_SIZE accumulate=$ACCUMULATE_GRAD_BATCHES"
 echo "World model    : layers=$WORLD_LAYERS heads=$WORLD_HEADS rollout=$WORLD_ROLLOUT_STEPS chunk=$PROPOSAL_CHUNK_SIZE"
 echo "Gates          : refine=$INIT_REFINE_GATE score=$INIT_SCORE_GATE"
+echo "LR scheduler   : dataset_size=$SCHEDULER_DATASET_SIZE"
 echo "======================================="
 
 LOGGER_OVERRIDES=()
@@ -142,7 +152,7 @@ fi
   use_cache_without_dataset=true \
   force_cache_computation=false \
   +auto_resume_training=false \
-  +scene_filter_token_file="$FIXED_TOKEN_FILE" \
+  "${TOKEN_OVERRIDES[@]}" \
   trainer.params.max_epochs="$MAX_EPOCHS" \
   +trainer.params.devices="$NUM_GPUS" \
   trainer.params.strategy="$TRAINER_STRATEGY" \
@@ -159,6 +169,7 @@ fi
   agent.progress_bar=false \
   agent.lr_args.name=AdamW \
   agent.lr_args.base_lr="$BASE_LR" \
+  agent.scheduler_args.dataset_size="$SCHEDULER_DATASET_SIZE" \
   agent.config.use_bev_feature=true \
   agent.config.use_bev_in_decoder=false \
   agent.config.use_bev_in_scorer=false \
