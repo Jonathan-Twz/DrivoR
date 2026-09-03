@@ -179,3 +179,24 @@ python scripts/evaluation/collect_idea0002_01_results.py \
   --static-csv /path/to/static/csv_logs/version_0/metrics.csv \
   --world-csv /path/to/world/csv_logs/version_0/metrics.csv
 ```
+
+## Official NAVSIM v1 Evaluation
+
+The checkpoint with the best observed validation score was evaluated on the complete NAVSIM v1 `navtest` set on 2026-09-03:
+
+- Checkpoint: `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt`
+- Selection metric: `val/score_epoch=0.917410`
+- Evaluation launcher: `scripts/evaluation/run_drivor_proposal_world_evaluation.sh`
+- Architecture: frozen pretrained encoder, original trajectory decoder, trajectory heads, scorer decoder, and score heads; trainable current-BEV tokenizer plus 2-layer, 4-head proposal-world Transformer; no LoRA
+- World rollout: one step over 64 proposals, FFN width 512, proposal chunk size 8
+- Refine/score gates: initialized at `0.01/0.01`; checkpoint values `0.042043/0.081296`
+- Official result CSV: `exp/ke/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/09.03_02.17/2026.09.03.02.38.11.csv`
+- Coverage: 12,146 successful scenarios, 0 failures
+
+| PDMS | NC | DAC | EP | TTC | Comfort | DDC |
+|---:|---:|---:|---:|---:|---:|---:|
+| **0.934903** | 0.989791 | 0.988721 | 0.895495 | 0.967479 | 0.999918 | 0.973078 |
+
+Against the same-protocol pretrained baseline (`PDMS=0.936905`), the proposal-world checkpoint changes PDMS by `-0.002002`. The largest submetric change is ego progress (`-0.003925`); NC and DAC each change by `-0.000576`, while TTC (`+0.000329`) and DDC (`+0.000536`) improve slightly. This confirms that the learned gates activate the proposal-world path, but the best validation checkpoint does not improve official v1 planning quality over the pretrained model. NAVSIM v2 EPDMS remains pending.
+
+The first evaluation attempt exposed a host-specific CUDA ordering issue: without `CUDA_DEVICE_ORDER=PCI_BUS_ID`, `CUDA_VISIBLE_DEVICES=0,1,2,4` mapped logical rank 3 to the 4 GB display GPU. The launcher now fixes PCI bus ordering and uses the shared local DINO weights. The successful rerun used four A100s, spent about 15 minutes in distributed inference and about 5 minutes in Ray PDMS scoring after the initial process startup.
