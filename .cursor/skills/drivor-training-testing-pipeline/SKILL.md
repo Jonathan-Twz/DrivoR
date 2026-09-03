@@ -47,7 +47,7 @@ export NAVSIM_EXP_ROOT=/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp
 export NAVSIM_DEVKIT_ROOT=/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR
 ```
 
-On golduck, `CUDA_VISIBLE_DEVICES=0,1,2,3` maps to the four A100 compute GPUs under CUDA FASTEST_FIRST. Do not change it to `0,1,2,4` unless you have verified the local CUDA mapping.
+On golduck, `CUDA_VISIBLE_DEVICES=0,1,2,3` maps to the four A100 compute GPUs under CUDA FASTEST_FIRST. If physical `nvidia-smi` indices are required instead, set `CUDA_DEVICE_ORDER=PCI_BUS_ID` first and then use `CUDA_VISIBLE_DEVICES=0,1,2,4`. Never use `0,1,2,4` under the default ordering: the fourth logical device becomes the 4 GB display GPU.
 
 ## Core Training Launchers
 
@@ -285,6 +285,21 @@ bash scripts/evaluation/run_drivor_bev_decoder_evaluation.sh \
 
 For decoder+scorer checkpoints, change `agent.config.use_bev_in_scorer=true` and keep both LoRA ranks at the training values.
 
+Proposal-conditioned world refiner:
+
+```bash
+cd /mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01
+CKPT_PATH=/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/ke/<experiment>/<uid>/checkpoints/<best>.ckpt \
+EXPERIMENT_NAME=drivoR_nav1_<short_run_name> \
+bash scripts/evaluation/run_drivor_proposal_world_evaluation.sh
+```
+
+This launcher uses `CUDA_DEVICE_ORDER=PCI_BUS_ID` with physical A100 indices
+`0,1,2,4`, local DINO weights, `bev_data_split=test`, and the architecture
+defaults used by idea 0002-01: 2 Transformer layers, 4 heads, FFN 512, one
+rollout step, and proposal chunk size 8. Checkpoint state-dict loading should
+report zero missing and zero unexpected keys.
+
 Scorer-only BEV:
 
 ```bash
@@ -463,5 +478,10 @@ Jul08 decoder+scorer LoRA16 fine-tune best checkpoint:
 Older decoder-only LoRA16 reference: v1 PDMS about `0.9322`; v2 combined EPDMS about `0.4966`.
 
 Residual proposal refiner epoch 29 reference: v1 PDMS `0.931695`; v2 combined EPDMS `0.478820`.
+
+Proposal-conditioned world refiner best epoch 3 reference: v1 PDMS `0.934903`
+(12,146 valid / 0 failed), versus pretrained baseline `0.936905`. NAVSIM v2 is
+pending. Full provenance and submetrics are in `docs/evaluation-ledger.md` and
+`docs/experiments/idea0002_01_fast_validation.md`.
 
 For detailed v1 BEV eval troubleshooting use `drivor-bev-eval`. For v2-specific setup and failures use `drivor-navsim-v2-eval`. For W&B-specific smoke/debug use `drivor-wandb-smoke`.

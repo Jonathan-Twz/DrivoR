@@ -168,6 +168,8 @@
 - **当前全量配置**：8 GPU、每 rank batch 4、每 rank 4 个 DataLoader workers、prefetch 1、梯度累积 2、bf16、30 epochs。这里 `NUM_WORKERS=4` 是**每 GPU**，总计 32 workers；全局 forward batch 为 32，有效 optimizer batch 为 64。
 - **LR / scheduler 对齐**：base LR `1e-4` 经 batch 缩放后实际为 `7.071e-5`。梯度累积为 2 时，launcher 传 `SCHEDULER_DATASET_SIZE=62741`，对应每 epoch 约 1,961 次 optimizer update 和 30 epochs 共 58,830 个 scheduler steps。
 - **当前 run**：`Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache`，W&B project `drivor-world-model`，run id `xpdaydqh`。refine/score gate 均从 `0.01` 初始化。
+- **最终状态**：完成 epoch 12 并保存 `epoch=12-step=25493.ckpt` 与 `last.ckpt`，随后在 2026-08-26 的 epoch 13 中因 ProcessGroupNCCL watchdog hang 终止。结束前日志反复报告 Ray 临时目录所在共享文件系统超过 95% 使用率；两者时间相关，但日志不足以证明磁盘压力直接导致 NCCL hang。
+- **top-5 验证 checkpoint**：从 `last.ckpt` callback metadata 读取的排序为 epoch 3 `0.91741037`、epoch 8 `0.91723996`、epoch 11 `0.91721058`、epoch 5 `0.91706008`、epoch 9 `0.91702908`。因此 official v1 使用 epoch 3 是严格按最高 `val/score_epoch` 选择。
 - **完整性修复**：token `fa6bbdbd03325e34` 的 gzip cache 损坏；保留 `.corrupt-before-recache-20260818` 备份后单独 recache。随后全量扫描 303,556 files / 5,075.40 GiB，0 failures；报告在 `exp/cache_integrity/20260818_1511/report.json`。
 - **性能实测**：扫描结束后的稳定阶段约 12 h 42 min 至 12 h 59 min/train epoch，约 2 h 16 min/validation epoch。该 workload 主要受 NFS cache I/O 和 CPU gzip/pickle 解码限制。
 - **payload 膨胀**：即使 `use_privileged_future_bev=false`，cache target 仍会反序列化 `privileged_future_bev`。代表样本中该张量为 `(4,256,128,128)`，约 64 MiB uncompressed，并占约 62% compressed sample I/O；它被记录 valid rate，但未传入 agent forward，不构成 future-information leakage。
@@ -175,6 +177,18 @@
 - **不要因 batch 8 直接重启**：若 benchmark batch 8，应使用 accumulation 1、显式 LR `7.071e-5`、`SCHEDULER_DATASET_SIZE=125482`，保持 effective batch 和 scheduler update 数一致。已有估算要求至少约 6.8%/epoch 加速才抵消重启损失；I/O-bound 时收益可能不足。
 - **优先加速项**：先确保 GPU 独占；在 purrgil 单独 benchmark `NCCL_P2P_DISABLE=0`（8 卡拓扑均为 NVLink），但不要把 guppy 的 transport workaround 全局删除；不要盲增 workers，当前已经是 32 个 worker 并发读共享 cache。
 - **指标判断**：负的 `train/inter_loss{,0}` 是 `-min distance` diversity diagnostic，且当前权重为 0，属于预期；`val/score_error` 混合 log-domain PDM target 与 linear proposal score，不能当 calibration error；官方结论必须来自 top-k checkpoint 的 NAVSIM-v1 PDMS / NAVSIM-v2 EPDMS，而不是只看 `val/score_epoch`。
+
+### Proposal-world 最佳验证 checkpoint 的 NAVSIM v1 结果（2026-09-03）
+
+- **checkpoint 选择**：`best-epoch=3-step=7844.ckpt`，对应已观测最高 `val/score_epoch=0.917410`；完整路径为 `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt`。
+- **结构**：冻结 pretrained encoder、原始 trajectory decoder/heads、scorer decoder/heads；只启用 current-BEV tokenizer 与 proposal-conditioned world Transformer。无 LoRA；world module 为 2 layers / 4 heads / FFN 512 / rollout 1 / proposal chunk 8，64 proposals 同时被 refinement 与 score residual 使用。
+- **gate**：refine/score 初始值 `0.01/0.01`，checkpoint 中为 `0.042043/0.081296`，证明 world residual path 已实际打开。
+- **launcher**：`scripts/evaluation/run_drivor_proposal_world_evaluation.sh`；`bev_data_split=test`，v1 metric 权重为 NOC 1 / DAC 1 / DDC 0 / TTC 5 / EP 5 / comfort 2。
+- **结果**：12,146 successful / 0 failed；PDMS `0.934903`，NC `0.989791`，DAC `0.988721`，EP `0.895495`，TTC `0.967479`，comfort `0.999918`，DDC `0.973078`。
+- **对比结论**：同协议 pretrained baseline 为 `0.936905`，因此总分 `-0.002002`。最大回退来自 ego progress (`-0.003925`)；TTC (`+0.000329`) 与 DDC (`+0.000536`) 略有提高。当前证据说明模块在工作，但最佳 validation checkpoint 未改善 v1 official planning quality；NAVSIM v2 EPDMS 尚未评估。
+- **artifact**：结果 CSV 为 `exp/ke/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/09.03_02.17/2026.09.03.02.38.11.csv`；轨迹 pickle 为 `exp/navsim1_pdm_scores/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/2026.09.03.02.17.47.pkl`；成功日志为 `exp/eval_launch_logs/idea0002_01_best_epoch3_navsim_v1_rerun.log`。
+- **耗时**：成功 run 总 wall time 约 24 分钟，包含约 8 分钟主进程/DDP 冷启动、约 11 分钟四卡 inference、约 5 分钟 8-worker Ray PDMS scoring。当时四张 A100 上另有 root workload，因此该时间不是独占 GPU benchmark。
+- **设备陷阱**：第一次尝试失败日志为 `exp/eval_launch_logs/idea0002_01_best_epoch3_navsim_v1.log`。原因是默认 CUDA FASTEST_FIRST 下误用 `CUDA_VISIBLE_DEVICES=0,1,2,4`，使 logical rank 3 落到 4 GB display GPU。golduck 有两种正确写法：默认排序用 `0,1,2,3`；或设置 `CUDA_DEVICE_ORDER=PCI_BUS_ID` 后用 physical indices `0,1,2,4`。proposal-world launcher 已固定第二种，并使用共享本地 DINO weights，避免各 rank 下载。
 
 ## NAVSIM v2 评测（navhard_two_stage / EPDMS）
 
@@ -191,7 +205,7 @@
 - **v2 打分权重**（与 v1 navtest 不同）：`noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`。
 - **参考分**：Nav2 `drivor_Nav2_10epochs.pth` 全量 navhard，EPDMS combined ≈ **0.483**（与 README 48.3 一致）。
 - **BEV scorer v2**：`bev_features_root=.../exports_pretrained_navsim_v2`、`bev_data_split=navhard_two_stage`、`scorer_bev.lora_rank=16`；launcher 见 `navsim/scripts/evaluation/run_drivoR_pdm_score_v2.sh` 与 `_run_full_bev_nav2.sh`。
-- **GPU**：golduck 用 `CUDA_VISIBLE_DEVICES=0,1,2,4`；guppy 单卡 sequential 约 1.5–2 h / 5912 scenarios。默认 `worker=sequential`（勿用默认 Ray CPU worker 评 DrivoR）。
+- **GPU**：golduck 默认 CUDA ordering 用 `CUDA_VISIBLE_DEVICES=0,1,2,3`；若按 `nvidia-smi` physical indices 使用 `0,1,2,4`，必须同时设置 `CUDA_DEVICE_ORDER=PCI_BUS_ID`。guppy 单卡 sequential 约 1.5–2 h / 5912 scenarios。默认 `worker=sequential`（勿用默认 Ray CPU worker 评 DrivoR）。
 
 ## 建议命令速查
 

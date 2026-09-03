@@ -25,7 +25,8 @@ alwaysApply: true
 
 - Host: `golduck.engin.umich.edu`
 - GPUs: 4× NVIDIA A100-SXM4-80GB (nvidia-smi index 0,1,2,4) + 1× "NVIDIA DGX Display" (index 3, 4 GB, **not usable for compute**).
-- CUDA enumerates by speed (FASTEST_FIRST), so the 4 A100s become cuda:0–3 and `+trainer.params.devices=4` uses all four A100s — **no need to manually exclude index 3**.
+- Under CUDA's default FASTEST_FIRST ordering, use `CUDA_VISIBLE_DEVICES=0,1,2,3`; these logical indices are the four A100s. To use physical `nvidia-smi` indices instead, first set `CUDA_DEVICE_ORDER=PCI_BUS_ID`, then use `CUDA_VISIBLE_DEVICES=0,1,2,4`.
+- Never use `CUDA_VISIBLE_DEVICES=0,1,2,4` without `CUDA_DEVICE_ORDER=PCI_BUS_ID`: on this host it maps logical rank 3 to the 4 GB display GPU and causes OOM during inference.
 - 80 GB VRAM → GPU VRAM is no longer the bottleneck (unlike guppy A6000). NCCL still needs `NCCL_P2P_DISABLE=1`, `NCCL_IB_DISABLE=1`.
 
 ## Data Paths
@@ -132,6 +133,7 @@ alwaysApply: true
 - **v1 (navtest, open-loop PDMS)**: single-frame planning score. Env `drivoR-share`. Set `NAVSIM_DEVKIT_ROOT=DrivoR`.
   - Scorer-BEV: `scripts/evaluation/run_drivor_bev_evaluation.sh`
   - Decoder-BEV: `scripts/evaluation/run_drivor_bev_decoder_evaluation.sh` (`use_bev_in_decoder=true`, `decoder_bev.lora_rank=16`)
+  - Proposal-world: `scripts/evaluation/run_drivor_proposal_world_evaluation.sh` (`use_proposal_world_refiner=true`, all other BEV injection flags false)
 - **v2 (navhard_two_stage, closed-loop EPDMS)**: two-stage reactive eval; one run yields **stage_one**, **stage_two**, and **combined** scores. Env `drivoR-share`. Set `NAVSIM_DEVKIT_ROOT=navsim`.
   - Decoder-BEV: `navsim/scripts/evaluation/run_drivoR_pdm_score_v2_decoder_bev.sh`; skill `drivor-navsim-v2-eval`.
   - Scorer-BEV: `navsim/scripts/evaluation/run_drivoR_pdm_score_v2.sh`
@@ -151,6 +153,7 @@ alwaysApply: true
 | Nav2 baseline | v2 combined EPDMS | ≈ 0.483 |
 | Decoder-BEV LoRA16 (last.ckpt) | v1 PDMS | **0.9322** |
 | Residual proposal refiner (epoch=29-step=39870.ckpt) | v1 PDMS | **0.9317** |
+| Proposal-conditioned world refiner (best epoch 3) | v1 PDMS | **0.934903** |
 | Decoder-BEV LoRA16 (last.ckpt) | v2 stage_one | **0.8413** |
 | Decoder-BEV LoRA16 (last.ckpt) | v2 stage_two | **0.5850** |
 | Decoder-BEV LoRA16 (last.ckpt) | v2 combined EPDMS | **0.4966** |
@@ -163,6 +166,8 @@ v2 decoder-BEV bottleneck: stage_two `lane_keeping` ≈ 0.519 (stage_one ≈ 0.9
 Residual proposal refiner v1 eval (2026-06-24): checkpoint `exp/ke/Jun22-golduck-4gpu-0initalpha-bev-residual-proposal-refiner/06.22_05.10/checkpoints/epoch=29-step=39870.ckpt`; result CSV `exp/ke/drivoR_nav1-bev-residual-proposal-refiner-epoch29/06.24_10.22/2026.06.24.10.41.24.csv`; 12146 successful / 0 failed scenarios; submetrics: `no_at_fault_collisions=0.991685`, `drivable_area_compliance=0.989626`, `ego_progress=0.882383`, `time_to_collision_within_bound=0.970690`, `comfort=1.000000`, `driving_direction_compliance=0.977606`, `score=0.931695`.
 
 Residual proposal refiner v2 eval (2026-06-24): checkpoint `DrivoR/exp/ke/Jun22-golduck-4gpu-0initalpha-bev-residual-proposal-refiner/06.22_05.10/checkpoints/epoch=29-step=39870.ckpt`; result CSV `navsim/exp/drivoR_nav2_bev_residual_proposal_refiner_epoch29/2026.06.24.11.11.37/2026.06.24.13.45.59.csv`; 5912 successful / 0 failed scenarios; headline scores: `stage_one=0.842178`, `stage_two=0.565484`, `combined=0.478820`. Combined submetrics: stage_one `no_at_fault_collisions=0.990000`, `drivable_area_compliance=0.971111`, `driving_direction_compliance=0.998889`, `traffic_light_compliance=1.000000`, `ego_progress=0.772194`, `time_to_collision_within_bound=0.988889`, `lane_keeping=0.944444`, `history_comfort=0.975556`, `two_frame_extended_comfort=0.688889`; stage_two `no_at_fault_collisions=0.869743`, `drivable_area_compliance=0.859456`, `driving_direction_compliance=0.927707`, `traffic_light_compliance=0.991619`, `ego_progress=0.767012`, `time_to_collision_within_bound=0.851680`, `lane_keeping=0.518043`, `history_comfort=0.979836`, `two_frame_extended_comfort=0.691413`.
+
+Proposal-conditioned world refiner v1 eval (2026-09-03): checkpoint `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt`; result CSV `exp/ke/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/09.03_02.17/2026.09.03.02.38.11.csv`; 12146 successful / 0 failed scenarios; submetrics: `no_at_fault_collisions=0.989791`, `drivable_area_compliance=0.988721`, `ego_progress=0.895495`, `time_to_collision_within_bound=0.967479`, `comfort=0.999918`, `driving_direction_compliance=0.973078`, `score=0.934903`. This is `-0.002002` versus the same-protocol pretrained baseline; NAVSIM v2 remains pending.
 
 ## Don'ts
 

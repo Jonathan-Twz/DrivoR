@@ -114,7 +114,7 @@ These small-subset results are a hypothesis screen, not official NAVSIM PDMS/EPD
 
 ## Full-Scale Nonzero-Gate Follow-up
 
-The zero-gate screen motivated a full-data follow-up with both proposal-world output gates initialized to `0.01`. This is an active training run; the numbers below are an interim snapshot from **2026-08-22 03:06 EDT**, not final NAVSIM results.
+The zero-gate screen motivated a full-data follow-up with both proposal-world output gates initialized to `0.01`. The numbers below are an interim snapshot from **2026-08-22 03:06 EDT**. The run later completed epoch 12, saved `epoch=12-step=25493.ckpt` and `last.ckpt`, then terminated during epoch 13 on 2026-08-26 after a ProcessGroupNCCL watchdog hang. The final logs also contain repeated Ray warnings that the shared filesystem was over 95% full; the logs establish temporal correlation but not that storage pressure directly caused the NCCL hang.
 
 ### Reproducible setup
 
@@ -154,7 +154,7 @@ The first full launch exposed one corrupt gzip cache entry, token `fa6bbdbd03325
 
 At the snapshot, epoch 5 training was 91% complete (`3579/3921`). Its latest logged gates were approximately `0.0486` and `0.1015`. W&B history contained no NaN/Inf values and no rates outside `[0, 1]`. Negative `train/inter_loss` and `train/inter_loss0` are expected because the diversity diagnostic is implemented as negative minimum distance and has zero training weight in this configuration.
 
-The gates now move decisively away from initialization, so the zero-gate gradient-starvation failure is resolved. However, the best validation score through epoch 4 is only `0.917410` at epoch 3, and L2 plus proposal-selection hit rates do not show a consistent improvement. This is currently evidence that the module is active, not evidence that it improves planning. Official NAVSIM-v1 PDMS and NAVSIM-v2 EPDMS must wait for checkpoint evaluation; validation score is only a proxy.
+The gates now move decisively away from initialization, so the zero-gate gradient-starvation failure is resolved. However, the best validation score is `0.917410` at epoch 3, and L2 plus proposal-selection hit rates do not show a consistent improvement. This is evidence that the module is active, not evidence that it improves planning. The official NAVSIM-v1 result is reported below; NAVSIM-v2 EPDMS remains pending. Validation score is only a proxy.
 
 `val/score_error` should not be interpreted as calibrated score error: it compares a log-domain `pdm_score` target against a linear proposal score. The logged `privileged_future_bev_valid_rate=0.79344` describes fields present in cached targets; `use_privileged_future_bev=false` means those fields are not passed into the model.
 
@@ -186,6 +186,7 @@ The checkpoint with the best observed validation score was evaluated on the comp
 
 - Checkpoint: `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt`
 - Selection metric: `val/score_epoch=0.917410`
+- Final `last.ckpt` callback audit: epoch 3 is the global best at `0.91741037`; the remaining saved top five are epoch 8 (`0.91723996`), epoch 11 (`0.91721058`), epoch 5 (`0.91706008`), and epoch 9 (`0.91702908`)
 - Evaluation launcher: `scripts/evaluation/run_drivor_proposal_world_evaluation.sh`
 - Architecture: frozen pretrained encoder, original trajectory decoder, trajectory heads, scorer decoder, and score heads; trainable current-BEV tokenizer plus 2-layer, 4-head proposal-world Transformer; no LoRA
 - World rollout: one step over 64 proposals, FFN width 512, proposal chunk size 8

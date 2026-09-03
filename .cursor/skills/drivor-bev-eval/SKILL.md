@@ -1,10 +1,10 @@
 ---
 name: drivor-bev-eval
 description: >-
-  Evaluate DrivoR BEV phase-1 checkpoints (scorer-side or decoder-side) on NAVSIM
-  v1 PDMS and diagnose LoRA/gate mismatches. Use when running navtest eval, when
-  load_state_dict fails with LoRA size mismatch, or when checking whether the BEV
-  branch is actually used. For v2 EPDMS use drivor-navsim-v2-eval.
+  Evaluate DrivoR BEV checkpoints (scorer-side, decoder-side, residual refiner,
+  or proposal-world) on NAVSIM v1 PDMS and diagnose structure/gate mismatches.
+  Use when running navtest eval, when load_state_dict fails, or when checking
+  whether the BEV branch is actually used. For v2 EPDMS use drivor-navsim-v2-eval.
 disable-model-invocation: true
 ---
 
@@ -23,8 +23,10 @@ disable-model-invocation: true
 |--------------------|--------|-----------|
 | **Scorer** (original) | `scripts/evaluation/run_drivor_bev_evaluation.sh` | `use_bev_in_scorer=true` (default) |
 | **Decoder** (trajectory generator) | `scripts/evaluation/run_drivor_bev_decoder_evaluation.sh` | `use_bev_in_scorer=false`, `use_bev_in_decoder=true` |
+| **Residual proposal refiner** | `scripts/evaluation/run_drivor_bev_residual_proposal_refiner_evaluation.sh` | `use_bev_residual_proposal_refiner=true` |
+| **Proposal-conditioned world refiner** | `scripts/evaluation/run_drivor_proposal_world_evaluation.sh` | `use_proposal_world_refiner=true`; all other BEV injection flags false |
 
-Both run from **DrivoR tree** with env **`drivoR-share`**. Ensure `NAVSIM_DEVKIT_ROOT=DrivoR` (not navsim).
+All run from the **DrivoR tree** with env **`drivoR-share`**. Ensure `NAVSIM_DEVKIT_ROOT=DrivoR` (not navsim).
 
 ## Key Rules
 
@@ -36,6 +38,14 @@ Both run from **DrivoR tree** with env **`drivoR-share`**. Ensure `NAVSIM_DEVKIT
 - Env vars exposed by scripts:
   - Scorer: `SCORER_BEV_LORA_RANK`, `SCORER_BEV_INIT_GATE`
   - Decoder: `DECODER_BEV_LORA_RANK`, `CKPT_PATH`, `EXPERIMENT_NAME`
+  - Proposal-world: `CKPT_PATH`, `EXPERIMENT_NAME`, `WORLD_LAYERS`,
+    `WORLD_HEADS`, `WORLD_FFN_DIM`, `WORLD_ROLLOUT_STEPS`, and
+    `PROPOSAL_CHUNK_SIZE`
+- On golduck, do not mix `nvidia-smi` indices with CUDA's default
+  FASTEST_FIRST ordering. Either use `CUDA_VISIBLE_DEVICES=0,1,2,3` with the
+  default ordering, or set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and then use the
+  physical A100 indices `CUDA_VISIBLE_DEVICES=0,1,2,4`. The proposal-world
+  launcher uses the second convention to exclude the display GPU.
 
 ## Run Eval
 
@@ -50,11 +60,30 @@ bash scripts/evaluation/run_drivor_bev_decoder_evaluation.sh
 CKPT_PATH=exp/ke/.../checkpoints/last.ckpt \
 DECODER_BEV_LORA_RANK=16 \
 bash scripts/evaluation/run_drivor_bev_decoder_evaluation.sh
+
+# Proposal-conditioned world refiner
+CKPT_PATH=exp/ke/.../checkpoints/best-epoch=3-step=7844.ckpt \
+EXPERIMENT_NAME=drivoR_nav1-proposal-world-best-epoch3 \
+bash scripts/evaluation/run_drivor_proposal_world_evaluation.sh
 ```
 
-## Reference Result (Jun 2026)
+## Reference Results
 
 Decoder-BEV LoRA16 `last.ckpt` on navtest: **PDMS = 0.9322**
+
+Proposal-conditioned world refiner `best-epoch=3-step=7844.ckpt` on the full
+NAVSIM v1 navtest split (2026-09-03): **PDMS = 0.934903**, with 12,146 valid
+scenarios and 0 failures. Submetrics: NC `0.989791`, DAC `0.988721`, EP
+`0.895495`, TTC `0.967479`, comfort `0.999918`, DDC `0.973078`. The same-protocol
+pretrained baseline is `0.936905`, so the result is `-0.002002`; the largest
+regression is ego progress (`-0.003925`). See `docs/evaluation-ledger.md` for
+the checkpoint and CSV paths.
+
+The first proposal-world attempt failed on logical rank 3 with a 4 GB display
+GPU OOM because `CUDA_VISIBLE_DEVICES=0,1,2,4` was used without PCI bus ordering.
+This is a device-enumeration failure, not a model-memory failure. The corrected
+four-A100 run took about 24 minutes wall time, including startup, inference, and
+Ray scoring.
 
 ## Diagnose The BEV Gate
 
