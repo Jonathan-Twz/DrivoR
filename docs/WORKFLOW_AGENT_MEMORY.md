@@ -185,7 +185,7 @@
 - **gate**：refine/score 初始值 `0.01/0.01`，checkpoint 中为 `0.042043/0.081296`，证明 world residual path 已实际打开。
 - **launcher**：`scripts/evaluation/run_drivor_proposal_world_evaluation.sh`；`bev_data_split=test`，v1 metric 权重为 NOC 1 / DAC 1 / DDC 0 / TTC 5 / EP 5 / comfort 2。
 - **结果**：12,146 successful / 0 failed；PDMS `0.934903`，NC `0.989791`，DAC `0.988721`，EP `0.895495`，TTC `0.967479`，comfort `0.999918`，DDC `0.973078`。
-- **对比结论**：同协议 pretrained baseline 为 `0.936905`，因此总分 `-0.002002`。最大回退来自 ego progress (`-0.003925`)；TTC (`+0.000329`) 与 DDC (`+0.000536`) 略有提高。当前证据说明模块在工作，但最佳 validation checkpoint 未改善 v1 official planning quality；NAVSIM v2 EPDMS 尚未评估。
+- **对比结论**：同协议 pretrained baseline 为 `0.936905`，因此总分 `-0.002002`。最大回退来自 ego progress (`-0.003925`)；TTC (`+0.000329`) 与 DDC (`+0.000536`) 略有提高。当前证据说明模块在工作，但最佳 validation checkpoint 未改善 v1 official planning quality。
 - **artifact**：结果 CSV 为 `exp/ke/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/09.03_02.17/2026.09.03.02.38.11.csv`；轨迹 pickle 为 `exp/navsim1_pdm_scores/drivoR_nav1-idea0002-01-proposal-world-best-epoch3/2026.09.03.02.17.47.pkl`；成功日志为 `exp/eval_launch_logs/idea0002_01_best_epoch3_navsim_v1_rerun.log`。
 - **耗时**：成功 run 总 wall time 约 24 分钟，包含约 8 分钟主进程/DDP 冷启动、约 11 分钟四卡 inference、约 5 分钟 8-worker Ray PDMS scoring。当时四张 A100 上另有 root workload，因此该时间不是独占 GPU benchmark。
 - **设备陷阱**：第一次尝试失败日志为 `exp/eval_launch_logs/idea0002_01_best_epoch3_navsim_v1.log`。原因是默认 CUDA FASTEST_FIRST 下误用 `CUDA_VISIBLE_DEVICES=0,1,2,4`，使 logical rank 3 落到 4 GB display GPU。golduck 有两种正确写法：默认排序用 `0,1,2,3`；或设置 `CUDA_DEVICE_ORDER=PCI_BUS_ID` 后用 physical indices `0,1,2,4`。proposal-world launcher 已固定第二种，并使用共享本地 DINO weights，避免各 rank 下载。
@@ -205,6 +205,7 @@
 - **v2 打分权重**（与 v1 navtest 不同）：`noc=10 dac=13 ddc=6 ttc=14 ep=15 comfort=2`。
 - **参考分**：Nav2 `drivor_Nav2_10epochs.pth` 全量 navhard，EPDMS combined ≈ **0.483**（与 README 48.3 一致）。
 - **BEV scorer v2**：`bev_features_root=.../exports_pretrained_navsim_v2`、`bev_data_split=navhard_two_stage`、`scorer_bev.lora_rank=16`；launcher 见 `navsim/scripts/evaluation/run_drivoR_pdm_score_v2.sh` 与 `_run_full_bev_nav2.sh`。
+- **Proposal-world v2（2026-09-11）**：epoch-3 最佳验证 checkpoint 在完整 5,912 scenarios 上 5,912 successful / 0 failed；Stage 1 `0.847867`、Stage 2 `0.548431`、combined EPDMS `0.468746`。结果 CSV：`navsim/exp/drivoR_nav2-idea0002-01-proposal-world-best-epoch3/2026.09.11.05.12.46/2026.09.11.08.09.36.csv`。相对 original baseline combined `-0.014398`，相对 decoder-only BEV `-0.027880`；主要 trade-off 是 EP/LK 提高，但 NC/DAC/TTC/extended comfort 回退。单张共享 A100 总耗时 2 h 56 min 50 s。
 - **GPU**：golduck 默认 CUDA ordering 用 `CUDA_VISIBLE_DEVICES=0,1,2,3`；若按 `nvidia-smi` physical indices 使用 `0,1,2,4`，必须同时设置 `CUDA_DEVICE_ORDER=PCI_BUS_ID`。guppy 单卡 sequential 约 1.5–2 h / 5912 scenarios。默认 `worker=sequential`（勿用默认 Ray CPU worker 评 DrivoR）。
 
 ## 建议命令速查

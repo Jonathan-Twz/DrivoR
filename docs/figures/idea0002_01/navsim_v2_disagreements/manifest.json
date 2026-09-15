@@ -1,0 +1,183 @@
+{
+  "baseline_checkpoint": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/weights/checkpoints/drivor_Nav2_10epochs.pth",
+  "proposal_checkpoint": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt",
+  "baseline_csv": "/mnt/ws-frb/users/jingyuso/wenzhet/navsim/exp/drivoR_nav2_full/2026.06.03.17.36.37/2026.06.03.19.19.49.csv",
+  "proposal_csv": "/mnt/ws-frb/users/jingyuso/wenzhet/navsim/exp/drivoR_nav2-idea0002-01-proposal-world-best-epoch3/2026.09.11.05.12.46/2026.09.11.08.09.36.csv",
+  "scenes": {
+    "fd7743059db2ad01f": {
+      "metrics": {
+        "baseline": {
+          "stage": 2,
+          "score": 0.0,
+          "failed": [
+            "NC",
+            "TTC"
+          ],
+          "values": {
+            "NC": 0.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 0.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        },
+        "proposal": {
+          "stage": 2,
+          "score": 1.0,
+          "failed": [],
+          "values": {
+            "NC": 1.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        }
+      },
+      "selected_proposals": {
+        "baseline": 49,
+        "proposal": 37
+      },
+      "figure": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01/docs/figures/idea0002_01/navsim_v2_disagreements/baseline_fail_proposal_success/fd7743059db2ad01f.png"
+    },
+    "cac2753c7c7b93847": {
+      "metrics": {
+        "baseline": {
+          "stage": 2,
+          "score": 0.0,
+          "failed": [
+            "DAC"
+          ],
+          "values": {
+            "NC": 1.0,
+            "DAC": 0.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        },
+        "proposal": {
+          "stage": 2,
+          "score": 1.0,
+          "failed": [],
+          "values": {
+            "NC": 1.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        }
+      },
+      "selected_proposals": {
+        "baseline": 17,
+        "proposal": 37
+      },
+      "figure": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01/docs/figures/idea0002_01/navsim_v2_disagreements/baseline_fail_proposal_success/cac2753c7c7b93847.png"
+    },
+    "e422b7a7bb9c41f95": {
+      "metrics": {
+        "baseline": {
+          "stage": 2,
+          "score": 1.0,
+          "failed": [],
+          "values": {
+            "NC": 1.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        },
+        "proposal": {
+          "stage": 2,
+          "score": 0.0,
+          "failed": [
+            "NC",
+            "TTC"
+          ],
+          "values": {
+            "NC": 0.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 0.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        }
+      },
+      "selected_proposals": {
+        "baseline": 20,
+        "proposal": 58
+      },
+      "figure": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01/docs/figures/idea0002_01/navsim_v2_disagreements/baseline_success_proposal_fail/e422b7a7bb9c41f95.png"
+    },
+    "cf516d2c4d97e69a8": {
+      "metrics": {
+        "baseline": {
+          "stage": 2,
+          "score": 1.0,
+          "failed": [],
+          "values": {
+            "NC": 1.0,
+            "DAC": 1.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        },
+        "proposal": {
+          "stage": 2,
+          "score": 0.0,
+          "failed": [
+            "DAC"
+          ],
+          "values": {
+            "NC": 1.0,
+            "DAC": 0.0,
+            "DDC": 1.0,
+            "TLC": 1.0,
+            "EP": 1.0,
+            "TTC": 1.0,
+            "LK": 1.0,
+            "HC": 1.0,
+            "EC": 1.0
+          }
+        }
+      },
+      "selected_proposals": {
+        "baseline": 20,
+        "proposal": 42
+      },
+      "figure": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01/docs/figures/idea0002_01/navsim_v2_disagreements/baseline_success_proposal_fail/cf516d2c4d97e69a8.png"
+    }
+  },
+  "contact_sheet": "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR-idea0002-01/docs/figures/idea0002_01/navsim_v2_disagreements/navsim_v2_disagreement_contact_sheet.png"
+}

@@ -154,7 +154,7 @@ The first full launch exposed one corrupt gzip cache entry, token `fa6bbdbd03325
 
 At the snapshot, epoch 5 training was 91% complete (`3579/3921`). Its latest logged gates were approximately `0.0486` and `0.1015`. W&B history contained no NaN/Inf values and no rates outside `[0, 1]`. Negative `train/inter_loss` and `train/inter_loss0` are expected because the diversity diagnostic is implemented as negative minimum distance and has zero training weight in this configuration.
 
-The gates now move decisively away from initialization, so the zero-gate gradient-starvation failure is resolved. However, the best validation score is `0.917410` at epoch 3, and L2 plus proposal-selection hit rates do not show a consistent improvement. This is evidence that the module is active, not evidence that it improves planning. The official NAVSIM-v1 result is reported below; NAVSIM-v2 EPDMS remains pending. Validation score is only a proxy.
+The gates now move decisively away from initialization, so the zero-gate gradient-starvation failure is resolved. However, the best validation score is `0.917410` at epoch 3, and L2 plus proposal-selection hit rates do not show a consistent improvement. This is evidence that the module is active, not evidence that it improves planning. The official NAVSIM-v1 and NAVSIM-v2 results are reported below. Validation score is only a proxy.
 
 `val/score_error` should not be interpreted as calibrated score error: it compares a log-domain `pdm_score` target against a linear proposal score. The logged `privileged_future_bev_valid_rate=0.79344` describes fields present in cached targets; `use_privileged_future_bev=false` means those fields are not passed into the model.
 
@@ -198,6 +198,58 @@ The checkpoint with the best observed validation score was evaluated on the comp
 |---:|---:|---:|---:|---:|---:|---:|
 | **0.934903** | 0.989791 | 0.988721 | 0.895495 | 0.967479 | 0.999918 | 0.973078 |
 
-Against the same-protocol pretrained baseline (`PDMS=0.936905`), the proposal-world checkpoint changes PDMS by `-0.002002`. The largest submetric change is ego progress (`-0.003925`); NC and DAC each change by `-0.000576`, while TTC (`+0.000329`) and DDC (`+0.000536`) improve slightly. This confirms that the learned gates activate the proposal-world path, but the best validation checkpoint does not improve official v1 planning quality over the pretrained model. NAVSIM v2 EPDMS remains pending.
+Against the same-protocol pretrained baseline (`PDMS=0.936905`), the proposal-world checkpoint changes PDMS by `-0.002002`. The largest submetric change is ego progress (`-0.003925`); NC and DAC each change by `-0.000576`, while TTC (`+0.000329`) and DDC (`+0.000536`) improve slightly. This confirms that the learned gates activate the proposal-world path, but the best validation checkpoint does not improve official v1 planning quality over the pretrained model.
 
 The first evaluation attempt exposed a host-specific CUDA ordering issue: without `CUDA_DEVICE_ORDER=PCI_BUS_ID`, `CUDA_VISIBLE_DEVICES=0,1,2,4` mapped logical rank 3 to the 4 GB display GPU. The launcher now fixes PCI bus ordering and uses the shared local DINO weights. The successful rerun used four A100s, spent about 15 minutes in distributed inference and about 5 minutes in Ray PDMS scoring after the initial process startup.
+
+## Official NAVSIM v2 Evaluation
+
+The same epoch-3 checkpoint was evaluated on the complete `navhard_two_stage` set on 2026-09-11:
+
+- Result CSV: `navsim/exp/drivoR_nav2-idea0002-01-proposal-world-best-epoch3/2026.09.11.05.12.46/2026.09.11.08.09.36.csv`
+- Coverage: 5,912 successful scenarios, 0 failures
+- Wall time: 2 h 56 min 50 s on one shared A100, including startup and final aggregation
+- Compatibility: the v2 runner loaded the checkpoint with 0 missing and 0 unexpected keys; an isolated `/tmp` overlay combined the current proposal-world agent with the established v2 runner without modifying either source checkout
+
+| Stage 1 | Stage 2 | Combined EPDMS |
+|---:|---:|---:|
+| 0.847867 | 0.548431 | **0.468746** |
+
+| Stage | NC | DAC | DDC | TLC | EP | TTC | LK | HC | EC |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Stage 1 | 0.992222 | 0.975556 | 0.995556 | 1.000000 | 0.781507 | 0.986667 | 0.940000 | 0.973333 | 0.697778 |
+| Stage 2 | 0.878969 | 0.845093 | 0.922929 | 0.984546 | 0.779353 | 0.846435 | 0.533829 | 0.978696 | 0.660679 |
+
+Relative to the original pretrained DrivoR, Stage 1 improves by `+0.038546`, but Stage 2 decreases by `-0.046080`, producing a combined regression of `-0.014398` (`-2.98%` relative). Stage-2 ego progress (`+0.081429`), lane keeping (`+0.033104`), and DDC (`+0.004311`) improve, while collision avoidance (`-0.023035`), DAC (`-0.038439`), TTC (`-0.033068`), and extended comfort (`-0.101477`) regress. The model is also `-0.027880` below the simpler decoder-only BEV checkpoint (`0.496626`). Therefore idea 0002-01, in its current task-supervised one-step form, does not justify its added complexity as the primary paper method.
+
+### Qualitative NAVSIM v2 disagreements
+
+The official per-scene CSVs contain 234 zero-score baseline cases where proposal-world is nonzero and 154 zero-score proposal-world cases where baseline is nonzero. Four unambiguous Stage-2 reversals were rendered with NAVSIM's map, annotation, and trajectory primitives. Each panel shows all 64 proposals in gray, the selected trajectory in model color, and the logged human future in dashed green.
+
+![NAVSIM v2 baseline/proposal-world disagreement cases](../figures/idea0002_01/navsim_v2_disagreements/navsim_v2_disagreement_contact_sheet.png)
+
+| Scene token | Baseline | Proposal-world | Reversed metric |
+|---|---:|---:|---|
+| `fd7743059db2ad01f` | 0.000 | 1.000 | Proposal-world avoids baseline NC and TTC failures |
+| `cac2753c7c7b93847` | 0.000 | 1.000 | Proposal-world avoids baseline DAC failure |
+| `e422b7a7bb9c41f95` | 1.000 | 0.000 | Proposal-world introduces NC and TTC failures |
+| `cf516d2c4d97e69a8` | 1.000 | 0.000 | Proposal-world introduces DAC failure |
+
+The baseline trajectories in these figures use the exact NAVSIM-v2 reference checkpoint, `weights/checkpoints/drivor_Nav2_10epochs.pth`, that generated the baseline CSV. The figure manifest records checkpoints, source CSVs, full component metrics, selected proposal indices, and output paths.
+
+Eight additional baseline-success/proposal-world-failure cases cover all observed zero-score failure signatures for which the baseline receives a perfect per-scene score. They are split across two contact sheets for readability.
+
+![Additional baseline-success/proposal-world-failure cases, page 1](../figures/idea0002_01/navsim_v2_baseline_success_proposal_fail_more/navsim_v2_disagreement_contact_sheet_page_1.png)
+
+![Additional baseline-success/proposal-world-failure cases, page 2](../figures/idea0002_01/navsim_v2_baseline_success_proposal_fail_more/navsim_v2_disagreement_contact_sheet_page_2.png)
+
+| Scene token | Proposal-world failed metrics |
+|---|---|
+| `0acf0c1a301a7180c` | DAC |
+| `1e90f84f7e7bca603` | DAC, EC |
+| `232ee9d7342aed6a0` | DAC, HC, EC |
+| `145a730c9e1e596f5` | NC, DAC, TTC, EC |
+| `4f6a928a2fd54c0ce` | NC, TTC |
+| `6facf1979a5a3837b` | NC, TTC, EC |
+| `036d27d8003dd2f2e` | TLC, EC |
+| `fba5b4aa043d4c14b` | DAC, EC |
