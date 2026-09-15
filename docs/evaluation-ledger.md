@@ -20,9 +20,10 @@ The recent June-July BEV evaluations are now documented with metrics and result 
 
 Presentation figures generated from the verified tables in this ledger are under `docs/figures/evaluation/` in PNG and PDF formats.  Regenerate them with `scripts/viz/plot_evaluation_ledger.py`.
 
+- `00_official_evaluation_dashboard`: combined headline test and checkpoint-aligned train/validation summary.
 - `01_official_test_results`: headline v1 PDMS, v2 Stage 1, and v2 Combined EPDMS comparison.
 - `02_submetric_heatmaps`: v1 and v2 Stage 2 behavior breakdown.
-- `03_validation_proxy_vs_test`: validation proxy versus official test metrics; descriptive only (`n=7`).
+- `03_validation_proxy_vs_test`: validation proxy versus official test metrics; descriptive only (`n=8`).
 - `04_epoch_time_and_v2_tradeoff`: recorded epoch wall time and v2 performance; not a controlled speed benchmark because run settings differ.
 - `05_train_validation_metric_comparison`: parallel comparison of train loss and validation proxy metrics by model configuration.
 
@@ -32,8 +33,8 @@ All categorical axes use the actual model configuration rather than the training
 
 | Experiment | Train date | Eval date | Checkpoint | Network setup | LoRA / gate | v1 PDMS | v2 stage 1 | v2 stage 2 | v2 combined EPDMS |
 |---|---:|---:|---|---|---|---:|---:|---:|---:|
-| Pretrained DrivoR baseline | release checkpoint | 2026-05-26 / 2026-05-27 (v1); 2026-06-03 (v2) | `weights/checkpoints/drivor_Nav1_25epochs.pth` | Original DrivoR, no BEV | none | 0.936905 | 0.809321 | 0.594511 | 0.483144 |
-| Pretrained DrivoR + proposal-conditioned current-BEV world refiner | 2026-08-18 | 2026-09-03 (v1) | `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt` | Frozen pretrained DrivoR; current BEV drives a one-step proposal-conditioned world rollout that refines all 64 proposals and adds a score residual; original decoder/scorer frozen | no LoRA; 2 Transformer layers, 4 heads, FFN 512, chunk 8; refine/score gates init 0.01/0.01 and checkpoint values 0.042043/0.081296 | 0.934903 | pending | pending | pending |
+| Pretrained DrivoR baseline | release checkpoint | 2026-05-26 / 2026-05-27 (v1); 2026-06-03 (v2) | v1: `weights/checkpoints/drivor_Nav1_25epochs.pth`; v2: `weights/checkpoints/drivor_Nav2_10epochs.pth` | Original DrivoR, no BEV | none | 0.936905 | 0.809321 | 0.594511 | 0.483144 |
+| Pretrained DrivoR + proposal-conditioned current-BEV world refiner | 2026-08-18 | 2026-09-03 (v1); 2026-09-11 (v2) | `exp/ke/Aug18-idea0002-01-proposal-world-full-8gpu-gates001/08.18_8gpu_full_gates001_schedfix_recache/checkpoints/best-epoch=3-step=7844.ckpt` | Frozen pretrained DrivoR; current BEV drives a one-step proposal-conditioned world rollout that refines all 64 proposals and adds a score residual; original decoder/scorer frozen | no LoRA; 2 Transformer layers, 4 heads, FFN 512, chunk 8; refine/score gates init 0.01/0.01 and checkpoint values 0.042043/0.081296 | 0.934903 | 0.847867 | 0.548431 | 0.468746 |
 | Pretrained DrivoR + current BEV decoder LoRA16 fine-tune | 2026-06-12 | 2026-06-14 / 2026-06-15 | `exp/ke/Jun12-golduck-4gpu-lora16-bev-decoder/06.12_01.12/checkpoints/last.ckpt` | Frozen pretrained DrivoR; current BEV in trajectory decoder only; scorer frozen | decoder LoRA rank 16, decoder init gate not explicitly logged in eval, scorer BEV off | 0.932158 | 0.841329 | 0.584989 | 0.496626 |
 | Pretrained DrivoR + current BEV residual proposal refiner | 2026-06-22 | 2026-06-24 | `exp/ke/Jun22-golduck-4gpu-0initalpha-bev-residual-proposal-refiner/06.22_05.10/checkpoints/epoch=29-step=39870.ckpt` | Frozen pretrained DrivoR; post-decoder/pre-scorer BEV residual proposal refiner | residual refiner layers 1, heads 1, alpha init 0.0, no decoder/scorer BEV | 0.931695 | 0.842178 | 0.565484 | 0.478820 |
 | DrivoR from scratch + current BEV decoder LoRA16, last | 2026-06-29 | 2026-07-03 | `exp/ke/Jun29-golduck-4gpu-lora16-0initgate-bev-trajectory-decoder-refiner-from-scratch-baseline-split-30epochs/06.29_bev_decoder_from_scratch_baseline_split_30ep/checkpoints/last.ckpt` | DrivoR from scratch with current BEV in trajectory decoder only | decoder LoRA rank 16, init gate 0.0, scorer BEV off | 0.932017 | 0.836660 | 0.536875 | 0.447110 |
@@ -90,6 +91,7 @@ Columns: `LK` = lane keeping, `HC` = history comfort, `EC` = two-frame extended 
 | Experiment | Result CSV | Valid / failed | Stage 1 | Stage 2 | Combined |
 |---|---|---:|---:|---:|---:|
 | Pretrained DrivoR baseline | `navsim/exp/drivoR_nav2_full/2026.06.03.17.36.37/2026.06.03.19.19.49.csv` | 5912 / 0 | 0.809321 | 0.594511 | 0.483144 |
+| Pretrained DrivoR + proposal-conditioned current-BEV world refiner | `navsim/exp/drivoR_nav2-idea0002-01-proposal-world-best-epoch3/2026.09.11.05.12.46/2026.09.11.08.09.36.csv` | 5912 / 0 | 0.847867 | 0.548431 | 0.468746 |
 | BEV scorer legacy run | `navsim/exp/drivoR_bev_nav2_full/2026.06.04.01.27.29/2026.06.04.03.28.00.csv` | 5912 / 0 | 0.838159 | 0.548902 | 0.462490 |
 | BEV scorer rank8 gate0 legacy run | `navsim/exp/drivoR_bev_nav2_rank8_gate0/2026.06.04.23.11.29/2026.06.05.01.15.41.csv` | 5912 / 0 | 0.842452 | 0.554914 | 0.467980 |
 | Pretrained DrivoR + current BEV decoder LoRA16 fine-tune | `navsim/exp/drivoR_nav2_decoder_bev_lora16_last/2026.06.15.00.29.11/2026.06.15.03.14.05.csv` | 5912 / 0 | 0.841329 | 0.584989 | 0.496626 |
@@ -106,6 +108,7 @@ Columns: `LK` = lane keeping, `HC` = history comfort, `EC` = two-frame extended 
 | Experiment | S1 NC | S1 DAC | S1 DDC | S1 TLC | S1 EP | S1 TTC | S1 LK | S1 HC | S1 EC | S2 NC | S2 DAC | S2 DDC | S2 TLC | S2 EP | S2 TTC | S2 LK | S2 HC | S2 EC |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Pretrained DrivoR baseline | 0.987778 | 0.951111 | 0.988889 | 1.000000 | 0.726299 | 0.986667 | 0.940000 | 0.975556 | 0.733333 | 0.902004 | 0.883532 | 0.918618 | 0.986224 | 0.697924 | 0.879503 | 0.500725 | 0.985213 | 0.762156 |
+| Pretrained DrivoR + proposal-conditioned current-BEV world refiner | 0.992222 | 0.975556 | 0.995556 | 1.000000 | 0.781507 | 0.986667 | 0.940000 | 0.973333 | 0.697778 | 0.878969 | 0.845093 | 0.922929 | 0.984546 | 0.779353 | 0.846435 | 0.533829 | 0.978696 | 0.660679 |
 | BEV scorer legacy | 0.990000 | 0.966667 | 0.996667 | 1.000000 | 0.785005 | 0.986667 | 0.942222 | 0.975556 | 0.662222 | 0.857041 | 0.861923 | 0.913993 | 0.987901 | 0.796581 | 0.836907 | 0.526670 | 0.985328 | 0.664906 |
 | BEV scorer rank8 gate0 legacy | 0.990000 | 0.968889 | 0.996667 | 1.000000 | 0.784932 | 0.986667 | 0.942222 | 0.975556 | 0.675556 | 0.858344 | 0.862971 | 0.920636 | 0.987820 | 0.796874 | 0.832688 | 0.530658 | 0.981215 | 0.677226 |
 | Pretrained DrivoR + current BEV decoder LoRA16 fine-tune | 0.988889 | 0.971111 | 0.996667 | 1.000000 | 0.766855 | 0.988889 | 0.935556 | 0.975556 | 0.724444 | 0.883254 | 0.872065 | 0.934825 | 0.993842 | 0.754583 | 0.859066 | 0.518615 | 0.981594 | 0.733703 |

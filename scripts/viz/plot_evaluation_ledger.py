@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
+from PIL import Image
 
 
 COLORS = {
@@ -203,6 +204,31 @@ RUNS = [
         "v1_sub": [0.989709, 0.987650, 0.894209, 0.966079, 0.999835, 0.973325],
         "v2_s2_sub": [0.870729, 0.856781, 0.915275, 0.988053, 0.796639, 0.846325, 0.529390, 0.972375, 0.674714],
     },
+    {
+        "id": "Aug18",
+        "label": "Pretrained + proposal-conditioned BEV\nworld refiner",
+        "short": "PT proposal-world",
+        "v1": 0.934903,
+        "v2_s1": 0.847867,
+        "v2_s2": 0.548431,
+        "v2": 0.468746,
+        "val": 0.917410,
+        "train_loss": 1.442839,
+        "val_best": 0.968081,
+        "val_lost": 0.050671,
+        "val_hit": 0.059341,
+        "val_top5": 0.213650,
+        "val_l2": 0.615268,
+        "val_collision": 0.991303,
+        "val_dac": 0.971110,
+        "val_progress": 0.874700,
+        "val_ttc": 0.968788,
+        "val_comfort": 0.999962,
+        "train_h": 12 + 58 / 60 + 31 / 3600,
+        "val_h": 2 + 16 / 60 + 20 / 3600,
+        "v1_sub": [0.989791, 0.988721, 0.895495, 0.967479, 0.999918, 0.973078],
+        "v2_s2_sub": [0.878969, 0.845093, 0.922929, 0.984546, 0.779353, 0.846435, 0.533829, 0.978696, 0.660679],
+    },
 ]
 
 BASELINE = {
@@ -265,7 +291,7 @@ def plot_overall(output_dir: Path) -> None:
         ("v2_s1", "NAVSIM v2 Stage 1", COLORS["green"], (0.800, 0.855)),
         ("v2", "NAVSIM v2 Combined EPDMS", COLORS["orange"], (0.435, 0.505)),
     ]
-    fig, axes = plt.subplots(1, 3, figsize=(16.0, 5.4), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 6.0), sharey=True)
     for ax, (key, title, color, limits) in zip(axes, metrics):
         values = [run[key] for run in RUNS]
         bars = ax.barh(y, values, color=color, height=0.62)
@@ -276,12 +302,18 @@ def plot_overall(output_dir: Path) -> None:
         ax.set_axisbelow(True)
         ax.invert_yaxis()
         baseline_value = BASELINE[key]
-        ax.axvline(baseline_value, color=COLORS["red"], linestyle="--", linewidth=1.4)
+        ax.axvline(
+            baseline_value,
+            color=COLORS["red"],
+            linestyle=(0, (4, 2)),
+            linewidth=2.0,
+            zorder=5,
+        )
         ax.set_xlabel(f"Dashed line: pretrained baseline = {baseline_value:.4f}", fontsize=8, color=COLORS["red"])
     axes[0].set_yticks(y, labels)
     fig.suptitle("DrivoR Official Evaluation Results", x=0.06, ha="left", fontsize=16, fontweight="bold")
     fig.text(0.06, 0.01, "Verified NAVSIM v1/v2 evaluations; Jun29 identical last/best results shown once.", fontsize=9, color="#52606D")
-    fig.subplots_adjust(left=0.28, right=0.98, top=0.82, bottom=0.13, wspace=0.28)
+    fig.subplots_adjust(left=0.28, right=0.98, top=0.84, bottom=0.13, wspace=0.28)
     save_figure(fig, output_dir, "01_official_test_results")
 
 
@@ -306,7 +338,7 @@ def plot_submetrics(output_dir: Path) -> None:
     v1 = np.array([BASELINE["v1_sub"]] + [run["v1_sub"] for run in RUNS])
     v2_rows = ["Pretrained baseline"] + run_rows
     v2 = np.array([BASELINE["v2_s2_sub"]] + [run["v2_s2_sub"] for run in RUNS])
-    fig, axes = plt.subplots(2, 1, figsize=(15.5, 8.8), gridspec_kw={"height_ratios": [1, 1.15]})
+    fig, axes = plt.subplots(2, 1, figsize=(15.5, 9.6), gridspec_kw={"height_ratios": [1, 1.15]})
     draw_heatmap(axes[0], v1, rows, ["NC", "DAC", "EP", "TTC", "Comfort", "DDC"], "NAVSIM v1 submetrics")
     image = draw_heatmap(
         axes[1],
@@ -382,13 +414,17 @@ def plot_timing(output_dir: Path) -> None:
         v2,
         s=90,
         c=[
-            COLORS["green"],
-            COLORS["green"],
-            COLORS["gray"],
-            COLORS["gray"],
-            COLORS["orange"],
-            COLORS["red"],
-            COLORS["blue"],
+            [
+                COLORS["green"],
+                COLORS["green"],
+                COLORS["gray"],
+                COLORS["gray"],
+                COLORS["orange"],
+                COLORS["red"],
+                COLORS["blue"],
+                COLORS["yellow"],
+            ][index % 8]
+            for index in range(len(RUNS))
         ],
         edgecolor="white",
         linewidth=0.8,
@@ -434,7 +470,7 @@ def plot_train_val_metrics(output_dir: Path) -> None:
     y = np.arange(len(RUNS))
     values = lambda key: np.array([run[key] for run in RUNS])
 
-    fig, axes = plt.subplots(2, 2, figsize=(16.5, 9.5), sharey=True)
+    fig, axes = plt.subplots(2, 2, figsize=(16.5, 10.2), sharey=True)
 
     bars = axes[0, 0].barh(y, values("train_loss"), height=0.58, color=COLORS["blue"])
     annotate_bars(axes[0, 0], bars, digits=3)
@@ -517,6 +553,29 @@ def plot_train_val_metrics(output_dir: Path) -> None:
     save_figure(fig, output_dir, "05_train_validation_metric_comparison")
 
 
+def compose_dashboard(output_dir: Path) -> None:
+    """Stack the headline test and checkpoint-aligned train/validation figures."""
+    paths = [
+        output_dir / "01_official_test_results.png",
+        output_dir / "05_train_validation_metric_comparison.png",
+    ]
+    images = [Image.open(path).convert("RGB") for path in paths]
+    width = max(image.width for image in images)
+    resized = []
+    for image in images:
+        if image.width != width:
+            height = round(image.height * width / image.width)
+            image = image.resize((width, height), Image.Resampling.LANCZOS)
+        resized.append(image)
+    gap = 36
+    dashboard = Image.new("RGB", (width, sum(image.height for image in resized) + gap), "white")
+    y = 0
+    for image in resized:
+        dashboard.paste(image, (0, y))
+        y += image.height + gap
+    dashboard.save(output_dir / "00_official_evaluation_dashboard.png")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -537,6 +596,7 @@ def main() -> None:
     plot_proxy_alignment(args.output_dir)
     plot_timing(args.output_dir)
     plot_train_val_metrics(args.output_dir)
+    compose_dashboard(args.output_dir)
     print(f"Wrote evaluation figures to {args.output_dir.resolve()}")
 
 
