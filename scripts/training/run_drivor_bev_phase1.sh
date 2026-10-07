@@ -49,8 +49,16 @@ EXPERIMENT_UID="${EXPERIMENT_UID:-$(date +%m.%d_%H.%M)}"
 NUM_GPUS="${NUM_GPUS:-4}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 BASE_LR="${BASE_LR:-1e-4}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+SCORING_WORKERS="${SCORING_WORKERS:-3}"
+SCORING_WORKER_THREADS="${SCORING_WORKER_THREADS:-1}"
+USE_RAY_SCORE="${USE_RAY_SCORE:-false}"
+NUM_WORKERS="${NUM_WORKERS:-3}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
+# A rank and its scorer/loader children share the allocation's CPU allowance.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 BEV_DATA_SPLIT="${BEV_DATA_SPLIT:-trainval}"
 BEV_FEATURE_TYPE="${BEV_FEATURE_TYPE:-decoder_neck}"
 # BEV scorer cross-attn knobs (override defaults in agent/drivoR.yaml scorer_bev)
@@ -111,7 +119,7 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-if [[ "$NUM_WORKERS" == "0" && "$PREFETCH_FACTOR" == "1" ]]; then
+if [[ "$NUM_WORKERS" == "0" ]]; then
   PREFETCH_FACTOR=null
 fi
 
@@ -154,7 +162,8 @@ echo "PL strategy  : $TRAINER_STRATEGY"
 echo "NCCL P2P/IB  : $NCCL_P2P_DISABLE / $NCCL_IB_DISABLE"
 echo "Batch size   : $BATCH_SIZE"
 echo "Base LR      : $BASE_LR"
-echo "Workers      : $NUM_WORKERS"
+echo "Loader workers/rank: $NUM_WORKERS"
+echo "Scorer workers/rank: $SCORING_WORKERS (threads/worker=$SCORING_WORKER_THREADS)"
 echo "Prefetch     : $PREFETCH_FACTOR"
 echo "Split        : $TRAIN_TEST_SPLIT / $SPLIT"
 echo "Max scenes   : ${SCENE_FILTER_MAX_SCENES:-default}"
@@ -244,7 +253,9 @@ PYTHONUNBUFFERED=1 \
   agent.lr_args.name=AdamW \
   agent.lr_args.base_lr="$BASE_LR" \
   agent.config.use_bev_feature=true \
-  agent.config.use_ray_score=true \
+  agent.config.scoring_workers="$SCORING_WORKERS" \
+  agent.config.scoring_worker_threads="$SCORING_WORKER_THREADS" \
+  agent.config.use_ray_score="$USE_RAY_SCORE" \
   agent.config.freeze_pretrained_except_bev_scorer=true \
   agent.config.bev_feature_type="$BEV_FEATURE_TYPE" \
   agent.config.bev_channels=256 \

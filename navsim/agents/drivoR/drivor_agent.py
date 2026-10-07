@@ -275,6 +275,22 @@ class NavsimV1PDMSEvalCallback(Callback):
         self._log_metrics(trainer, metrics)
 
 
+class ScoringPoolCleanup(Callback):
+    """Lightning does not call module teardown for every exception path."""
+
+    @staticmethod
+    def _close(pl_module):
+        close = getattr(pl_module.agent, "close_scoring_pool", None)
+        if callable(close):
+            close()
+
+    def teardown(self, trainer, pl_module, stage):
+        self._close(pl_module)
+
+    def on_exception(self, trainer, pl_module, exception):
+        self._close(pl_module)
+
+
 class DrivoRAgent(AbstractAgent):
     def __init__(
             self,
@@ -295,6 +311,7 @@ class DrivoRAgent(AbstractAgent):
         self.scheduler_args = scheduler_args
         self.batch_size = batch_size
         self.num_gpus = num_gpus
+        self._scoring_pool = None
 
 
         cache_data=False
@@ -310,7 +327,14 @@ class DrivoRAgent(AbstractAgent):
             self.bce_logit_loss = nn.BCEWithLogitsLoss()
             self.b2d = config.b2d
 
-            self.ray = bool(config.get("use_ray_score", True))
+            from .score_module.scoring_pool import ScoringPool
+
+            scoring_workers = config.get("scoring_workers", 0)
+            # Validate before choosing a backend, including serial mode.
+            scoring_pool = ScoringPool(scoring_workers, config.get("scoring_worker_threads", 1))
+            if scoring_pool.workers:
+                self._scoring_pool = scoring_pool
+            self.ray = self._scoring_pool is None and bool(config.get("use_ray_score", True)) and num_gpus == 1
 
             if self.ray:
                 from navsim.planning.utils.multithreading.worker_ray_no_torch import RayDistributedNoTorch
@@ -498,7 +522,9 @@ class DrivoRAgent(AbstractAgent):
             for token, poses in zip(targets["token"], proposals.cpu().numpy())
         ]
 
-        if self.ray:
+        if self._scoring_pool is not None:
+            all_res = self._scoring_pool(data_points)
+        elif self.ray:
             all_res = self.worker_map(self.worker, self.get_scores, data_points)
         else:
             all_res = self.get_scores(data_points)
@@ -533,6 +559,11 @@ class DrivoRAgent(AbstractAgent):
         if refiner is not None and isinstance(loss_dict, dict):
             loss_dict["residual_alpha"] = refiner.alpha.detach()
         return loss_dict
+
+    def close_scoring_pool(self):
+        """Idempotent cleanup; a later fit/validate call can lazily reopen it."""
+        if self._scoring_pool is not None:
+            self._scoring_pool.close()
 
     def _collect_trainable_params(self):
         """Select parameters for the optimizer.
@@ -665,7 +696,7 @@ class DrivoRAgent(AbstractAgent):
         lr_monitor = LearningRateMonitor(logging_interval="step", 
                                             log_momentum=False,
                                             log_weight_decay=False)
-        callbacks = [checkpoint_cb_best, checkpoint_cb]
+        callbacks = [checkpoint_cb_best, checkpoint_cb, ScoringPoolCleanup()]
         epoch_pdms_eval = NavsimV1PDMSEvalCallback()
         if epoch_pdms_eval.enabled:
             callbacks.append(epoch_pdms_eval)

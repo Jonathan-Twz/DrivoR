@@ -28,6 +28,11 @@ class AgentLightningModule(pl.LightningModule):
         self.checkpoint_file=None
         self.for_viz = for_viz
 
+    def teardown(self, stage: str) -> None:
+        close = getattr(self.agent, "close_scoring_pool", None)
+        if callable(close):
+            close()
+
     def _sync_dist(self) -> bool:
         """Only synchronize logs across ranks when running distributed."""
         trainer = getattr(self, "trainer", None)

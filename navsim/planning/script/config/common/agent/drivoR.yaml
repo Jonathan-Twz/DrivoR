@@ -145,6 +145,10 @@ config:
   # new cross_attn_bev sublayers inside scorer_attention and/or trajectory_decoder.
   # All other parameters are frozen.
   freeze_pretrained_except_bev_scorer: false
+  # CPU-only processes per DDP rank. 0 preserves the legacy serial/Ray backend.
+  # The BEV phase-1 launcher defaults to the measured 3-worker pool.
+  scoring_workers: 0
+  scoring_worker_threads: 1
   use_ray_score: true
 
 
