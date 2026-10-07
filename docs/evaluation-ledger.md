@@ -28,6 +28,25 @@ Presentation figures generated from the verified tables in this ledger are under
 
 All categorical axes use the actual model configuration rather than the training date.  The Jun29 LoRA16 `last` and `best` rows have identical metrics and are plotted once.  Legacy rows with incomplete provenance are excluded from the main figures.
 
+## October 2026 Ego-Motion-Dropout Comparison (v1 and v2 Complete)
+
+These three checkpoints were selected by validation score before test evaluation. They use current BEV in the trajectory decoder only (LoRA rank 16), scorer BEV off, and 10% ego-motion dropout during training; dropout is disabled at inference. NAVSIM v1 `navtest` evaluation on 2026-10-03 covered the same 12,146 tokens for every checkpoint, with 12,146 valid results and zero failures each. NAVSIM v2 `navhard_two_stage` evaluation on 2026-10-04 covered the same 5,912 tokens for every checkpoint (450 original stage-one and 5,462 synthetic stage-two), with 5,912 valid results and zero failures each. BEV feature coverage was complete for both stages (no zero-fill warnings).
+
+| Training job | Training data | Training GPUs | Checkpoint (validation-selected) | v1 PDMS | v2 stage 1 | v2 stage 2 | v2 combined EPDMS |
+|---|---|---|---|---:|---:|---:|---:|
+| 61761164 | 100%, 85,109 samples | 2 RTX PRO 6000, batch 32/GPU | `exp/ke/Sep23-bev-decoder-ego10-jun12split-2PRO6000-b32-w6-job61761164/full-v1/checkpoints/best-epoch=21-step=29238.ckpt` | 0.935960048 | 0.846320118 | 0.532449690 | 0.456875380 |
+| 61826557 | Fixed 10%, 8,511 samples | 2 RTX PRO 6000, batch 32/GPU | `exp/ke/bev-decoder-ego10-train010-val100-b32x2-seed2-job61826557/train010-job61826557-v1/checkpoints/best-epoch=1-step=266.ckpt` | 0.936737379 | 0.842403951 | 0.545074764 | 0.464149046 |
+| 61763018 | Same fixed 10%, 8,511 samples | 4 A40, batch 16/GPU | `exp/ke/bev-decoder-ego10-train010-val100-b16x4-A40-seed2-job61763018/train010-job61763018-v1/checkpoints/best-epoch=1-step=266.ckpt` | 0.937704477 | 0.842333223 | 0.541459500 | 0.464564277 |
+
+The v1 CSVs and full v1 protocol are in `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navtest_oct03/RESULTS.md`. The v2 CSVs are under `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navhard_v2_oct04/`: `train100_pro6000/2026.10.04.16.13.34.csv`, `train010_pro6000/2026.10.04.16.13.06.csv`, and `train010_a40/2026.10.04.16.12.09.csv`. The v2 run used allocation `61760769` (three RTX PRO 6000 GPUs, one per checkpoint), the repository's `run_drivoR_pdm_score_v2_decoder_bev.sh` evaluator, a relocated index for the existing metric cache, and a map-root override for paths embedded in the transferred cache. Resolved Hydra overrides and logs are preserved beside each CSV.
+
+Relative to full-data training, combined v2 EPDMS is higher by `0.007273666` for 10%-data PRO 6000 and by `0.007688898` for 10%-data A40, mostly from Stage 2; both 10%-data models have lower Stage 1 scores. These are small single-seed comparisons with different selected epochs/optimization budgets, not evidence that less training data generally improves performance.
+
+## October 2026 Matched 0% vs 10% Ego-Motion Dropout
+
+<!-- ego00-job63199495-pending -->
+Status: **evaluation pending**. Training job `63199495` completed 30 epochs on four A40 GPUs, using the same fixed 8,511 training / 18,179 validation samples and global batch 64 as job `61763018`, but with 0% rather than 10% ego-motion dropout. All other saved training overrides match apart from experiment/logging identity. The checkpoint was selected by `val/score_epoch` before test evaluation: `exp/ke/bev-decoder-ego00-train010-val100-b16x4-A40-seed2-job63199495/train010-ego00-job63199495-v1/checkpoints/best-epoch=21-step=2926.ckpt` (validation proxy 0.952046454). Evaluation on allocation `63199495` uses the same v1/v2 protocols as the October reference runs, one A40 per evaluator concurrently. Logs/results: `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_ego00_oct07/`. Scores will only be published after exact-token coverage and zero-failure checks pass.
+
 ## Recent Complete Results
 
 | Experiment | Train date | Eval date | Checkpoint | Network setup | LoRA / gate | v1 PDMS | v2 stage 1 | v2 stage 2 | v2 combined EPDMS |
@@ -41,6 +60,9 @@ All categorical axes use the actual model configuration rather than the training
 | Pretrained DrivoR + current BEV decoder+scorer LoRA16 fine-tune | 2026-07-08 | 2026-07-11 | `exp/ke/Jul08-golduck-4gpu-lora16-0initgate-bev-decoder-scorer-finetune-30epochs/07.08_23.51/checkpoints/best-epoch=0-step=1329.ckpt` | Frozen pretrained DrivoR; current BEV in decoder and scorer | decoder LoRA rank 16, scorer LoRA rank 16, init gates 0.0 / 0.0 | 0.936007 | 0.847325 | 0.547436 | 0.467831 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 2 | 2026-07-14 | 2026-07-17 | `exp/ke/Jul14-golduck-4gpu-lora16-0initgate-current-future-bev-decoder-scorer/07.14_16.16/checkpoints/best-epoch=2-step=7113.ckpt` | Frozen pretrained DrivoR; current BEV in decoder and scorer; privileged future-BEV oracle enabled during training/validation only (`future_bev_num_steps=4`, `future_bev_stride=1`, future BEV used in decoder and scorer); official eval uses current BEV only | decoder LoRA rank 16, scorer LoRA rank 16, init gates 0.0 / 0.0 | 0.933425 | 0.837930 | 0.546367 | 0.461443 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 6 | 2026-07-14 | 2026-07-21 | `exp/ke/Jul14-golduck-4gpu-lora16-0initgate-current-future-bev-decoder-scorer/07.14_16.16/checkpoints/best-epoch=6-step=16597.ckpt` | Frozen pretrained DrivoR; current BEV in decoder and scorer; privileged future-BEV oracle enabled during training/validation only (`future_bev_num_steps=4`, `future_bev_stride=1`, future BEV used in decoder and scorer); official eval uses current BEV only | decoder LoRA rank 16, scorer LoRA rank 16, init gates 0.0 / 0.0 | 0.933163 | 0.849266 | 0.561461 | 0.480632 |
+| Ego-motion dropout 10%, full training data (job 61761164) | 2026-09-23 onward | 2026-10-03 (v1); 2026-10-04 (v2) | `exp/ke/Sep23-bev-decoder-ego10-jun12split-2PRO6000-b32-w6-job61761164/full-v1/checkpoints/best-epoch=21-step=29238.ckpt` | Current BEV in decoder only; scorer BEV off; dropout disabled at eval | decoder LoRA rank 16, 10% ego-motion dropout during training | 0.935960 | 0.846320 | 0.532450 | 0.456875 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61826557) | 2026-09-24 onward | 2026-10-03 (v1); 2026-10-04 (v2) | `exp/ke/bev-decoder-ego10-train010-val100-b32x2-seed2-job61826557/train010-job61826557-v1/checkpoints/best-epoch=1-step=266.ckpt` | Current BEV in decoder only; scorer BEV off; dropout disabled at eval | decoder LoRA rank 16, 10% ego-motion dropout during training | 0.936737 | 0.842404 | 0.545075 | 0.464149 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61763018) | 2026-09-25 onward | 2026-10-03 (v1); 2026-10-04 (v2) | `exp/ke/bev-decoder-ego10-train010-val100-b16x4-A40-seed2-job61763018/train010-job61763018-v1/checkpoints/best-epoch=1-step=266.ckpt` | Current BEV in decoder only; scorer BEV off; dropout disabled at eval | decoder LoRA rank 16, 10% ego-motion dropout during training | 0.937704 | 0.842333 | 0.541459 | 0.464564 |
 
 For the Jul14 current+future-BEV run, epoch 6 versus epoch 2 changes v1 PDMS by `-0.000262`, v2 Stage 1 by `+0.011336`, v2 Stage 2 by `+0.015094`, and v2 Combined EPDMS by `+0.019189`.  Epoch 6 v2 Combined remains `0.002512` below the pretrained DrivoR baseline (`0.483144`).
 
@@ -78,6 +100,9 @@ Columns: `NC` = no-at-fault collisions, `DAC` = drivable-area compliance, `EP` =
 | Pretrained DrivoR + current BEV decoder+scorer LoRA16 fine-tune | `exp/ke/drivoR_nav1_Jul08_lora16_decoder_scorer_best_epoch0_gpu0123/07.11_11.14/2026.07.11.11.32.29.csv` | 12146 / 0 | 0.936007 | 0.990120 | 0.988144 | 0.901130 | 0.965091 | 1.000000 | 0.973078 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 2 | `exp/ke/drivoR_nav1_Jul14_current_future_bev_decoder_scorer_best_epoch2/07.17_03.12/2026.07.17.03.53.53.csv` | 12146 / 0 | 0.933425 | 0.989997 | 0.988556 | 0.893291 | 0.966656 | 0.999835 | 0.972254 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 6 | `exp/ke/drivoR_nav1_Jul14_current_future_bev_decoder_scorer_best_epoch6/07.21_01.45/2026.07.21.02.27.19.csv` | 12146 / 0 | 0.933163 | 0.989709 | 0.987650 | 0.894209 | 0.966079 | 0.999835 | 0.973325 |
+| Ego-motion dropout 10%, full training data (job 61761164) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navtest_oct03/train100_pro6000/2026.10.03.23.11.56.csv` | 12146 / 0 | 0.935960 | 0.989997 | 0.988144 | 0.899411 | 0.967067 | 0.999341 | 0.972666 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61826557) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navtest_oct03/train010_pro6000/2026.10.03.23.12.06.csv` | 12146 / 0 | 0.936737 | 0.990244 | 0.987980 | 0.901740 | 0.966409 | 0.999835 | 0.971843 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61763018) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navtest_oct03/train010_a40/2026.10.03.23.12.05.csv` | 12146 / 0 | 0.937704 | 0.990532 | 0.988309 | 0.903459 | 0.966409 | 0.999835 | 0.971637 |
 
 The baseline was independently rerun at `exp/ke/drivoR_nav1/05.27_23.35/2026.05.27.23.57.04.csv`; it also has `12146 / 0` and the same aggregate metrics.  Both runs preserve the full Hydra override list with `agent.checkpoint_path=./weights/checkpoints/drivor_Nav1_25epochs.pth`, `train_test_split=navtest`, and no BEV overrides.
 
@@ -98,6 +123,9 @@ Columns: `LK` = lane keeping, `HC` = history comfort, `EC` = two-frame extended 
 | Pretrained DrivoR + current BEV decoder+scorer LoRA16 fine-tune | `navsim/exp/drivoR_nav2_Jul08_lora16_decoder_scorer_best_epoch0_gpu0123/2026.07.11.11.33.22/2026.07.11.14.08.10.csv` | 5912 / 0 | 0.847325 | 0.547436 | 0.467831 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 2 | `navsim/exp/drivoR_nav2_Jul14_current_future_bev_decoder_scorer_best_epoch2/2026.07.17.03.10.28/2026.07.17.05.12.14.csv` | 5912 / 0 | 0.837930 | 0.546367 | 0.461443 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 6 | `navsim/exp/drivoR_nav2_Jul14_current_future_bev_decoder_scorer_best_epoch6/2026.07.21.01.43.54/2026.07.21.03.48.42.csv` | 5912 / 0 | 0.849266 | 0.561461 | 0.480632 |
+| Ego-motion dropout 10%, full training data (job 61761164) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navhard_v2_oct04/train100_pro6000/2026.10.04.16.13.34.csv` | 5912 / 0 | 0.846320 | 0.532450 | 0.456875 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61826557) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navhard_v2_oct04/train010_pro6000/2026.10.04.16.13.06.csv` | 5912 / 0 | 0.842404 | 0.545075 | 0.464149 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61763018) | `/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/training_runs/eval_navhard_v2_oct04/train010_a40/2026.10.04.16.12.09.csv` | 5912 / 0 | 0.842333 | 0.541459 | 0.464564 |
 
 ### v2 Submetrics
 
@@ -113,6 +141,9 @@ Columns: `LK` = lane keeping, `HC` = history comfort, `EC` = two-frame extended 
 | Pretrained DrivoR + current BEV decoder+scorer LoRA16 fine-tune | 0.990000 | 0.971111 | 0.997778 | 1.000000 | 0.786832 | 0.984444 | 0.946667 | 0.975556 | 0.697778 | 0.855054 | 0.844222 | 0.919130 | 0.990897 | 0.793148 | 0.836443 | 0.516290 | 0.977976 | 0.671874 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 2 | 0.983333 | 0.973333 | 0.996667 | 0.997778 | 0.783132 | 0.982222 | 0.944444 | 0.975556 | 0.693333 | 0.870881 | 0.836706 | 0.919632 | 0.991429 | 0.775803 | 0.839679 | 0.517425 | 0.978009 | 0.705899 |
 | Pretrained DrivoR + current+future BEV decoder+scorer LoRA16 fine-tune, epoch 6 | 0.990000 | 0.971111 | 0.996667 | 0.997778 | 0.790084 | 0.986667 | 0.955556 | 0.975556 | 0.711111 | 0.870729 | 0.856781 | 0.915275 | 0.988053 | 0.796639 | 0.846325 | 0.529390 | 0.972375 | 0.674714 |
+| Ego-motion dropout 10%, full training data (job 61761164) | 0.987778 | 0.968889 | 0.997778 | 1.000000 | 0.788581 | 0.982222 | 0.948889 | 0.975556 | 0.724444 | 0.862405 | 0.839545 | 0.915552 | 0.988772 | 0.808353 | 0.834076 | 0.515696 | 0.972724 | 0.633005 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61826557) | 0.978889 | 0.968889 | 0.995556 | 1.000000 | 0.790820 | 0.982222 | 0.935556 | 0.975556 | 0.742222 | 0.856868 | 0.832834 | 0.924019 | 0.985779 | 0.812989 | 0.833528 | 0.540435 | 0.980746 | 0.662774 |
+| Ego-motion dropout 10%, fixed 10% training data (job 61763018) | 0.983333 | 0.964444 | 0.995556 | 1.000000 | 0.793126 | 0.984444 | 0.940000 | 0.973333 | 0.720000 | 0.864156 | 0.837679 | 0.907886 | 0.985475 | 0.817949 | 0.833996 | 0.525312 | 0.974953 | 0.651835 |
 
 ## Legacy Recovered Metrics
 
