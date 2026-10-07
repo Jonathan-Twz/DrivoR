@@ -83,7 +83,13 @@ class AgentLightningModule(pl.LightningModule):
         """
         features, targets = batch
 
+        dropout = getattr(getattr(self.agent, "_drivor_model", None), "ego_motion_dropout", None)
+        if dropout is not None:
+            dropout.epoch = self.current_epoch
         prediction = self._forward_for_batch(features, targets, validation=(logging_prefix == "val"))
+        if dropout is not None and logging_prefix == "train":
+            self.log("train/ego_motion_drop_rate", dropout.last_drop_rate,
+                     on_step=True, on_epoch=True, sync_dist=self._sync_dist())
         loss_dict = self.agent.compute_loss(features, targets, prediction)
         self._log_privileged_future_bev_stats(targets, logging_prefix)
 
@@ -168,6 +174,11 @@ class AgentLightningModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Inherited, see superclass."""
+        if self._agent_config_flag("use_runtime_optimizer_schedule", False):
+            self.agent._optimizer_effective_batch_size = (
+                self.agent.batch_size * self.trainer.world_size * self.trainer.accumulate_grad_batches
+            )
+            self.agent._optimizer_total_steps = int(self.trainer.estimated_stepping_batches)
         return self.agent.get_optimizers()
     
     def predict_step(self, batch: Tuple[Dict[str, Tensor], Dict[str, Tensor]], batch_idx: int):

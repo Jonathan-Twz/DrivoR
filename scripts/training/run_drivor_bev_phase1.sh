@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVOR_ROOT="${DRIVOR_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$DRIVOR_ROOT/.." && pwd)}"
 DATA_ROOT="${DATA_ROOT:-$WORKSPACE_ROOT/navsim_dataset}"
-PYTHON_BIN="${PYTHON_BIN:-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-/home/wenzhet/.conda/envs/drivor/bin/python}"
 BEV_FEATURES_ROOT="${BEV_FEATURES_ROOT:-$WORKSPACE_ROOT/navsim_bev_feature/exports_pretrained}"
 
 export HYDRA_FULL_ERROR=1
@@ -49,9 +49,16 @@ EXPERIMENT_UID="${EXPERIMENT_UID:-$(date +%m.%d_%H.%M)}"
 NUM_GPUS="${NUM_GPUS:-4}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 BASE_LR="${BASE_LR:-1e-4}"
+EGO_MOTION_DROPOUT_PROB="${EGO_MOTION_DROPOUT_PROB:-0.0}"
+EGO_MOTION_DROPOUT_WARMUP_EPOCHS="${EGO_MOTION_DROPOUT_WARMUP_EPOCHS:-0}"
+ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-1}"
+CHECKPOINT_EVERY_N_TRAIN_STEPS="${CHECKPOINT_EVERY_N_TRAIN_STEPS:-0}"
 SCORING_WORKERS="${SCORING_WORKERS:-3}"
 SCORING_WORKER_THREADS="${SCORING_WORKER_THREADS:-1}"
 USE_RAY_SCORE="${USE_RAY_SCORE:-false}"
+TRAIN_CKPT_PATH="${TRAIN_CKPT_PATH:-null}"
+INCLUDE_VAL_LOGS_IN_TRAIN="${INCLUDE_VAL_LOGS_IN_TRAIN:-true}"
+USE_RUNTIME_OPTIMIZER_SCHEDULE="${USE_RUNTIME_OPTIMIZER_SCHEDULE:-false}"
 NUM_WORKERS="${NUM_WORKERS:-3}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 # A rank and its scorer/loader children share the allocation's CPU allowance.
@@ -170,7 +177,7 @@ echo "Max scenes   : ${SCENE_FILTER_MAX_SCENES:-default}"
 echo "Cache path   : $CACHE_PATH"
 echo "Use cache    : $USE_CACHE_WITHOUT_DATASET (force_build=$FORCE_CACHE_COMPUTATION)"
 echo "Token filter : $BEV_TOKEN_FILTER_FILE"
-WANDB_RUN_NAME="${EXPERIMENT}/${EXPERIMENT_UID}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-${EXPERIMENT}/${EXPERIMENT_UID}}"
 echo "W&B logger   : $USE_WANDB ($WANDB_MODE) run=$WANDB_RUN_NAME"
 echo "============================================="
 
@@ -256,6 +263,13 @@ PYTHONUNBUFFERED=1 \
   agent.config.scoring_workers="$SCORING_WORKERS" \
   agent.config.scoring_worker_threads="$SCORING_WORKER_THREADS" \
   agent.config.use_ray_score="$USE_RAY_SCORE" \
+  agent.config.ego_motion_dropout_prob="$EGO_MOTION_DROPOUT_PROB" \
+  agent.config.ego_motion_dropout_warmup_epochs="$EGO_MOTION_DROPOUT_WARMUP_EPOCHS" \
+  agent.config.checkpoint_every_n_train_steps="$CHECKPOINT_EVERY_N_TRAIN_STEPS" \
+  trainer.params.accumulate_grad_batches="$ACCUMULATE_GRAD_BATCHES" \
+  train_ckpt_path="$TRAIN_CKPT_PATH" \
+  include_val_logs_in_train="$INCLUDE_VAL_LOGS_IN_TRAIN" \
+  agent.config.use_runtime_optimizer_schedule="$USE_RUNTIME_OPTIMIZER_SCHEDULE" \
   agent.config.freeze_pretrained_except_bev_scorer=true \
   agent.config.bev_feature_type="$BEV_FEATURE_TYPE" \
   agent.config.bev_channels=256 \

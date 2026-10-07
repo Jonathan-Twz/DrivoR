@@ -7,6 +7,7 @@ from .transformer_decoder import TransformerDecoder, TransformerDecoderScorer
 from .layers.image_encoder.dinov2_lora import ImgEncoder
 from .layers.utils.mlp import MLP
 from .layers.bev_tokenizer import BevTokenizer
+from .layers.ego_motion_dropout import EgoMotionDropout
 from .layers.bev_scorer_blocks import BevAwareScorer
 from .layers.bev_decoder_blocks import BevAwareTrajectoryDecoder
 from .layers.bev_residual_proposal_refiner import BevResidualProposalRefiner
@@ -74,6 +75,13 @@ class DrivoRModel(nn.Module):
             self.hist_encoding = nn.Linear(11*4, config.tf_d_model)
         else:
             self.hist_encoding = nn.Linear(11, config.tf_d_model)
+
+        self.ego_motion_dropout = None
+        if float(config.get("ego_motion_dropout_prob", 0.0)) > 0:
+            self.ego_motion_dropout = EgoMotionDropout(
+                config.tf_d_model, config.ego_motion_dropout_prob,
+                config.get("ego_motion_dropout_warmup_epochs", 0),
+            )
 
         # trajectory embdedding
         if self._config.one_token_per_traj:
@@ -202,7 +210,8 @@ class DrivoRModel(nn.Module):
         else:
             ego_status: torch.Tensor = features["ego_status"][:, -1]
         
-        ego_token = self.hist_encoding(ego_status)[:, None]
+        ego_token = (self.hist_encoding(ego_status) if self.ego_motion_dropout is None
+                     else self.ego_motion_dropout(ego_status, self.hist_encoding))[:, None]
         log.debug(f"Ego features - {ego_token.shape}")
         traj_tokens = ego_token + self.init_feature.weight[None]
         log.debug(f"Traj tokens initial - {traj_tokens.shape}")

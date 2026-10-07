@@ -403,6 +403,7 @@ class DrivoRAgent(AbstractAgent):
                 logger = logging.getLogger(__name__)
                 expected_missing_prefixes = (
                     "_drivor_model.bev_tokenizer.",
+                    "_drivor_model.ego_motion_dropout.",
                     "_drivor_model.bev_residual_proposal_refiner.",
                     "_drivor_model.future_bev_time_embed",
                 )
@@ -579,6 +580,8 @@ class DrivoRAgent(AbstractAgent):
             return list(self._drivor_model.parameters())
 
         def _is_trainable(name: str) -> bool:
+            if name.startswith("ego_motion_dropout."):
+                return True
             if name.startswith("bev_tokenizer."):
                 return True
             if name == "future_bev_time_embed":
@@ -635,7 +638,7 @@ class DrivoRAgent(AbstractAgent):
 
     def get_optimizers(self):
 
-        global_batchsize = self.batch_size * self.num_gpus
+        global_batchsize = getattr(self, "_optimizer_effective_batch_size", self.batch_size * self.num_gpus)
         params = self._collect_trainable_params()
         if self._lr_args["name"] == "Adam":
             lr = self._lr_args["base_lr"] * math.sqrt(global_batchsize / self._lr_args["base_batch_size"])
@@ -648,7 +651,15 @@ class DrivoRAgent(AbstractAgent):
 
         if self.scheduler_args is not None:
 
-            T_max = int(math.ceil(self.scheduler_args.dataset_size / global_batchsize) *  self.scheduler_args.num_epochs)
+            T_max = int(getattr(self, "_optimizer_total_steps",
+                                math.ceil(self.scheduler_args.dataset_size / global_batchsize) * self.scheduler_args.num_epochs))
+            if T_max < 2:
+                raise ValueError("Learning-rate schedule needs at least two optimizer steps")
+            import logging
+            logging.getLogger(__name__).info(
+                "Optimizer effective batch=%d, peak lr=%g, scheduled steps=%d",
+                global_batchsize, lr, T_max,
+            )
 
             # classic cosine
             # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -658,7 +669,7 @@ class DrivoRAgent(AbstractAgent):
             # )
 
             # Ramp + cosine
-            T_max_ramp = int(T_max * 0.1)
+            T_max_ramp = max(1, int(T_max * 0.1))
             scheduler_ramp = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1e-6, total_iters=T_max_ramp)
             T_max_cosine = T_max - T_max_ramp
             scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -691,7 +702,14 @@ class DrivoRAgent(AbstractAgent):
                                         dirpath=checkpoint_dir,
                                         )
         
-        checkpoint_cb = ModelCheckpoint(save_last=True, dirpath=checkpoint_dir)
+        interval = int(self._config.get("checkpoint_every_n_train_steps", 0))
+        if interval > 0:
+            checkpoint_cb = ModelCheckpoint(
+                save_last=True, save_top_k=0, dirpath=checkpoint_dir,
+                every_n_train_steps=interval, save_on_train_epoch_end=True,
+            )
+        else:
+            checkpoint_cb = ModelCheckpoint(save_last=True, dirpath=checkpoint_dir)
 
         lr_monitor = LearningRateMonitor(logging_interval="step", 
                                             log_momentum=False,

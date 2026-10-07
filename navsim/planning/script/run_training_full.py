@@ -67,12 +67,16 @@ def build_datasets(cfg: DictConfig, agent: AbstractAgent) -> Tuple[Dataset, Data
         train_scene_filter.tokens = _load_token_filter(token_file)
         logger.info("Loaded %d scene filter tokens from %s", len(train_scene_filter.tokens), token_file)
 
+    if cfg.get("include_val_logs_in_train", True):
+        allowed_train_logs = set(cfg.train_logs) | set(cfg.val_logs)
+    else:
+        allowed_train_logs = set(cfg.train_logs) - set(cfg.val_logs)
     if train_scene_filter.log_names is not None:
         train_scene_filter.log_names = [
-            log_name for log_name in train_scene_filter.log_names if log_name in cfg.train_logs or log_name in cfg.val_logs 
+            name for name in train_scene_filter.log_names if name in allowed_train_logs
         ]
     else:
-        train_scene_filter.log_names = cfg.train_logs + cfg.val_logs
+        train_scene_filter.log_names = sorted(allowed_train_logs)
     
 
     print("len(train_scene_filter.log_names) ", len(train_scene_filter.log_names))
@@ -204,7 +208,7 @@ def main(cfg: DictConfig) -> None:
     trainer_params = OmegaConf.to_container(cfg.trainer.params, resolve=True)
     log_conf = trainer_params.get("logger", None)
     if isinstance(log_conf, dict) and "_target_" in log_conf:
-        local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+        local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0"))))
         trainer_params["logger"] = instantiate(log_conf) if local_rank == 0 else False
     elif log_conf in [None, "none", "None", "false", "False"]:
         trainer_params["logger"] = False
@@ -218,6 +222,8 @@ def main(cfg: DictConfig) -> None:
     if trainer_params.get("logger") is False:
         callbacks = [callback for callback in callbacks if not isinstance(callback, LearningRateMonitor)]
     trainer = pl.Trainer(**trainer_params, callbacks=callbacks)
+    if trainer.is_global_zero and trainer.logger:
+        trainer.logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
 
     if cfg.validation_run:
         logger.info("Starting Validation")

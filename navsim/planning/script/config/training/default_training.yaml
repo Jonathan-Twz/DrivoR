@@ -21,6 +21,7 @@ force_cache_computation: false
 experiment_name: drivoR
 seed: 0 
 validation_run: false
+include_val_logs_in_train: true # legacy full-training behavior; disable for held-out validation
 
 dataloader:
   params:
