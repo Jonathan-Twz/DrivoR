@@ -1,66 +1,29 @@
-# #!/bin/bash
-
-EXPERIMENT="${1:-cache_navsim_full_same_as_training}"
-EXPERIMENT_UID="${EXPERIMENT_UID:-$(date +%m.%d_%H.%M)}"
-# ─── Launcher-level logging: duplicate ALL stdout+stderr to launcher.log ───
-LAUNCHER_LOG_DIR="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/ke/${EXPERIMENT}/${EXPERIMENT_UID}"
-LAUNCHER_LOG_FILE="${LAUNCHER_LOG_DIR}/launcher.log"
-mkdir -p "$LAUNCHER_LOG_DIR"
-exec > >(tee -a "$LAUNCHER_LOG_FILE") 2>&1
-
-on_exit() {
-  local rc=$?
-  echo ""
-  echo "=== Launcher finished ==="
-  echo "Exit code  : $rc"
-  echo "Finish time: $(date -Is)"
-  exit $rc
-}
-trap on_exit EXIT
-
-## Running on goldeen now
-## /exp/navsim_cache_nommcv_full
-
-# OPENSCENE_DATA_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset" \
-# NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps" \
-# NUPLAN_MAP_VERSION="nuplan-maps-v1.0" NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp" \
-# NAVSIM_DEVKIT_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR" \
-# PYTHONUNBUFFERED=1 \
-# /mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python -u \
-# "/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/navsim/planning/script/run_dataset_caching.py" \
-# train_test_split=navtrain \
-# split=trainval \
-# agent=drivoR \
-# worker=sequential \
-# experiment_name=cache_navsim_full \
-# cache_path="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/navsim_cache_nommcv_full" \
-# force_cache_computation=true \
-# # agent.config.long_trajectory_additional_poses=2 \
-# # worker.threads_per_node=32 \
-# # dataloader.params.batch_size=1 
-
-## Same as training script
-## /exp/navsim_cache_nommcv_same_as_training
-
-OPENSCENE_DATA_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset" \
-NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps" \
-NUPLAN_MAP_VERSION="nuplan-maps-v1.0" NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp" \
-NAVSIM_DEVKIT_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR" \
-PYTHONUNBUFFERED=1 \
-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python -u \
-"/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/navsim/planning/script/run_dataset_caching.py" \
-train_test_split=navtrain \
-split=trainval \
-agent=drivoR \
-worker=sequential \
-experiment_name=cache_navsim_full \
-cache_path="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp/navsim_cache_nommcv_same_as_training" \
-force_cache_computation=true \
-agent.config.long_trajectory_additional_poses=2 \
-# worker.threads_per_node=32 \
-# dataloader.params.batch_size=1 \
-agent.config.use_bev_feature=true \
-agent.config.bev_feature_type=decoder_neck \
-agent.config.bev_channels=256 \
-agent.config.bev_features_root="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_bev_feature/exports_pretrained" \
-agent.config.bev_data_split=trainval 
+#!/usr/bin/env bash
+# Cache BEV training inputs only after exporting BEV tensors.
+set -euo pipefail
+DRIVOR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DATA_ROOT="${DATA_ROOT:-$(dirname "$DRIVOR_ROOT")/navsim_dataset}"
+PYTHON_BIN="${PYTHON_BIN:-/home/wenzhet/.conda/envs/drivor/bin/python}"
+export NAVSIM_DEVKIT_ROOT="$DRIVOR_ROOT"
+export NAVSIM_EXP_ROOT="${NAVSIM_EXP_ROOT:-$DRIVOR_ROOT/exp}"
+export OPENSCENE_DATA_ROOT="${OPENSCENE_DATA_ROOT:-$DATA_ROOT}"
+export NUPLAN_MAPS_ROOT="${NUPLAN_MAPS_ROOT:-$DATA_ROOT/maps}"
+export NUPLAN_MAP_VERSION="${NUPLAN_MAP_VERSION:-nuplan-maps-v1.0}"
+export PYTHONPATH="$DRIVOR_ROOT:$DRIVOR_ROOT/nuplan-devkit:${PYTHONPATH:-}"
+BEV_FEATURES_ROOT="${BEV_FEATURES_ROOT:-$(dirname "$DRIVOR_ROOT")/navsim_bev_feature/exports_pretrained}"
+BEV_DATA_SPLIT="${BEV_DATA_SPLIT:-trainval}"
+if [[ ! -d "$BEV_FEATURES_ROOT/$BEV_DATA_SPLIT" ]]; then
+    echo "ERROR: BEV features missing: $BEV_FEATURES_ROOT/$BEV_DATA_SPLIT" >&2
+    exit 1
+fi
+cd "$DRIVOR_ROOT"
+exec "$PYTHON_BIN" navsim/planning/script/run_dataset_caching.py \
+    train_test_split=navtrain split=trainval agent=drivoR worker=sequential \
+    experiment_name="${EXPERIMENT:-cache_navsim_same_as_training}" \
+    cache_path="${CACHE_PATH:-$NAVSIM_EXP_ROOT/navsim_cache_nommcv_same_as_training}" \
+    force_cache_computation="${FORCE_CACHE_COMPUTATION:-false}" \
+    agent.config.long_trajectory_additional_poses=2 \
+    agent.config.use_bev_feature=true \
+    agent.config.bev_feature_type=decoder_neck agent.config.bev_channels=256 \
+    agent.config.bev_features_root="$BEV_FEATURES_ROOT" \
+    agent.config.bev_data_split="$BEV_DATA_SPLIT" "$@"
