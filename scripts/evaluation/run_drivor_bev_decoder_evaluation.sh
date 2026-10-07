@@ -14,13 +14,13 @@ cd "$DRIVOR_ROOT"
 
 # ENV variables
 export DRIVOR_ROOT
-export PYTHON_BIN="${PYTHON_BIN:-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python}"
+export PYTHON_BIN="${PYTHON_BIN:-/home/wenzhet/.conda/envs/drivor/bin/python}"
 export NUPLAN_MAP_VERSION="nuplan-maps-v1.0"
-export NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps"
-export NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp"
+export NUPLAN_MAPS_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/maps"
+export NAVSIM_EXP_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/DrivoR/exp"
 export NAVSIM_DEVKIT_ROOT="${NAVSIM_DEVKIT_ROOT:-$DRIVOR_ROOT}"
-export OPENSCENE_DATA_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset"
-export BEV_FEATURES_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_bev_feature/exports_pretrained"
+export OPENSCENE_DATA_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset"
+export BEV_FEATURES_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_bev_feature/exports_pretrained"
 # golduck: do NOT set CUDA_DEVICE_ORDER=PCI_BUS_ID -> FASTEST_FIRST makes 0,1,2,3 the four A100s.
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 

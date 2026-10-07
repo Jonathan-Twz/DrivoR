@@ -4,16 +4,16 @@
 export HYDRA_FULL_ERROR=1 \
 export DRIVOR_ROOT="./" \
 export NUPLAN_MAP_VERSION="nuplan-maps-v1.0" \
-export NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps" \
-export NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp" \
+export NUPLAN_MAPS_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/maps" \
+export NAVSIM_EXP_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/DrivoR/exp" \
 export NAVSIM_DEVKIT_ROOT="${NAVSIM_DEVKIT_ROOT:-$DRIVOR_ROOT}" \
-export OPENSCENE_DATA_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset" \
+export OPENSCENE_DATA_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset" \
 EXPERIMENT=training_drivoR_Nav1_traj_long_25epochs
 AGENT=drivoR
 NUM_GPUS=${NUM_GPUS:-1}
 TRAINER_STRATEGY=${TRAINER_STRATEGY:-auto}
 
-/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share/bin/python \
+/home/wenzhet/.conda/envs/drivor/bin/python \
  ./navsim/planning/script/run_training_full.py  \
     agent=$AGENT \
     experiment_name=$EXPERIMENT \

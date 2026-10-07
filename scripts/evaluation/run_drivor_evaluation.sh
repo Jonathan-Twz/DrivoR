@@ -1,11 +1,11 @@
 # ENV variables
 export DRIVOR_ROOT="."
 export NUPLAN_MAP_VERSION="nuplan-maps-v1.0"
-export NUPLAN_MAPS_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset/maps"
-export NAVSIM_EXP_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR/exp"
+export NUPLAN_MAPS_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset/maps"
+export NAVSIM_EXP_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/DrivoR/exp"
 export NAVSIM_DEVKIT_ROOT="${NAVSIM_DEVKIT_ROOT:-$DRIVOR_ROOT}"
-export OPENSCENE_DATA_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_dataset"
-export BEV_FEATURES_ROOT="/mnt/ws-frb/users/jingyuso/wenzhet/navsim_bev_feature/exports_pretrained"
+export OPENSCENE_DATA_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_dataset"
+export BEV_FEATURES_ROOT="/nfs/turbo/coe-xiaonanh/wenzhet/navsim_bev_feature/exports_pretrained"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,4}"
 # NCCL variables, sync over time
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
