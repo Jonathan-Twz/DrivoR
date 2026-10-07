@@ -8,11 +8,28 @@ alwaysApply: true
 ## General
 
 - Always answer the user in Simplified Chinese unless they explicitly request otherwise.
-- This repo is DrivoR at `/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR`; avoid using WoTE scripts/configs accidentally.
-- Conda env: **`drivoR-share`** (Python 3.9, `/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share`) — used for **both training and evaluation** (v1 PDMS + v2 EPDMS).
-- `wandb 0.24.2` is installed in `drivoR-share`.
+- Current Great Lakes repo: `/nfs/turbo/coe-xiaonanh/wenzhet/DrivoR`; avoid using WoTE scripts/configs accidentally. Historical guppy/golduck workspace: `/mnt/ws-frb/users/jingyuso/wenzhet/DrivoR`.
+- Historical guppy/golduck conda env: **`drivoR-share`** (Python 3.9, `/mnt/ws-frb/users/jingyuso/miniconda3/envs/drivoR-share`) — used for training and evaluation (v1 PDMS + v2 EPDMS), with `wandb 0.24.2` installed. Do not assume this path/environment exists on Great Lakes.
 
-## Server (guppy)
+## Current Great Lakes production workers (updated 2026-10-07)
+
+- Tested allocation `63199495`: account `xiaonanh0`, partition `spgpu`, node `gl1504`, 4× A40, 16 allocated CPUs, 180 GiB host RAM. Recheck Slurm/GPU occupancy before reuse: allocation availability and idleness are not durable facts.
+- Actual GPU production tests used `/home/wenzhet/.conda/envs/drivor-blackwell/bin/python`. Nine CPU regression tests passed in both `drivor` and `drivor-blackwell`; GPU compatibility was not verified in `drivor` by these tests.
+- BEV phase-1 launcher and both existing four-GPU BEV wrappers now default to `SCORING_WORKERS=3`, `SCORING_WORKER_THREADS=1`, `NUM_WORKERS=3`, `PREFETCH_FACTOR=1`, `USE_RAY_SCORE=false`, batch 16/GPU (global 64). Wrapper Slurm resource/account declarations are unchanged.
+- `navsim/agents/drivoR/score_module/scoring_pool.py`: lazy persistent ordered CPU-only spawn pool per DDP rank. Four ranks use 12 scoring processes; DataLoader workers separately read/collate/prefetch, three per rank per active loader set (train/val sets may coexist). All processes share the allocation's existing CPUs.
+- Scoring workers hide CUDA and cap CPU library threads at one. Pools are excluded from serialization and cleaned up on normal teardown/exceptions. Pool-construction resource failures/broken pools warn and fall back to identical serial scoring; ordinary scene errors propagate. Training and both validation scoring calls use the pool; scoring math/loss/freezing/scheduler/checkpoint/data/W&B policies remain unchanged.
+- Generic agent YAML keeps `scoring_workers=0` for legacy entrypoints; BEV launcher/wrappers override to three. Direct Hydra: `agent.config.scoring_workers=3 agent.config.scoring_worker_threads=1 dataloader.params.num_workers=3 dataloader.params.prefetch_factor=1`. Serial debug: `SCORING_WORKERS=0 USE_RAY_SCORE=false`; `NUM_WORKERS=0` forces prefetch null.
+- Full-launch defaults remain 30 epochs and train/val limits `1.0`. Tested selection: `exp/bev_feature_tokens/jun12_train010_val100_seed2_job61826557/combined_tokens.txt`, `USE_CACHE_WITHOUT_DATASET=false CACHE_PATH=null INCLUDE_VAL_LOGS_IN_TRAIN=false`, 8,511 train / 18,179 val. “Full” means the whole configured split, not removal of the train-10% filter. Use a fresh experiment/UID for new training.
+- Matched benchmark (2026-10-06, 50 train + 12 val batches, excluding warmup): serial/loader-2 **11.56 / 11.62 s/batch** → scorer-3/loader-3 **4.77 / 4.49**, **2.42× train / 2.59× val**, approximately **2.53× dataset-weighted**. Fixed-scene scores and recorded training-loss sequences matched exactly; this is not a complete-run speed guarantee.
+- Scorers tested up to 8/GPU; 3–4 plateaued and 6/8 were slower. Loaders tested up to 4/GPU; 3 fastest, 2 nearly as fast in short screening with lower RAM. Tested counts are not hard limits. More CPUs/32-CPU tuning remain untested; additional workers do not grant additional CPU capacity.
+- CPU scoring, not GPU VRAM, dominated this benchmark. Per-GPU peak approximately 3.97 GiB allocated / 5.91 GiB reserved; pool host total approximately 170.06 GiB including file cache, non-cache approximately 79.94 GiB, no OOM. Keep host RAM, reclaimable cache and GPU VRAM distinct.
+- Production verification (2026-10-07): nine CPU tests; exact/finite real-scene train/val parity; actual four-GPU launcher completed two short epochs (6 train/3 val batches each), checkpoint save and fresh-process resume through epoch 2. All ranks exited 0, optimizer/scheduler restored, weights finite, no pool fallback/OOM, test workers cleaned up. Test W&B external writes were disabled.
+- Resume caveat: initial step-based checkpoint epoch 1 / step 12 executed an extra epoch-boundary batch on resume, then six epoch-2 batches, ending at step **19**, not 18. Existing checkpoint policy was not changed; do not claim exact dataloader/batch continuation.
+- No new complete 30-epoch run was launched. The original 30-epoch experiment/checkpoints/W&B run were untouched. Validation demonstrates multi-epoch execution and functional resume, not full-training convergence.
+- Large Hydra config serialization can appear quiet for several minutes at startup; inspect startup logs before diagnosing a GPU/scorer stall. Historical 30+ hour guppy initialization is not a Great Lakes measurement.
+- Usage: `docs/scoring-workers.md`. Durable evidence: `/nfs/turbo/coe-xiaonanh/wenzhet/gpu_benchmark_63199495/REPORT.md` and `PRODUCTION_INTEGRATION.md` (logs/verifier alongside). Isolated smoke outputs: `exp/ke/workerpool-production-smoke-63199495/20261007-integration-v1`. Expanded memory: `docs/WORKFLOW_AGENT_MEMORY.md`. This dated Great Lakes section takes precedence over historical host-specific examples below or in other workflow notes.
+
+## Historical server (guppy)
 
 - Host: `guppy.engin.umich.edu`
 - GPUs: 2× NVIDIA RTX A6000 (48 GB each).
@@ -21,7 +38,7 @@ alwaysApply: true
 - DNS can be intermittent → W&B online mode may fail; prefer `WANDB_MODE=offline` for long runs, then `wandb sync` afterwards.
 - NCCL: default P2P/IB transport fails on guppy; always export `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.
 
-## Server (golduck)
+## Historical server (golduck)
 
 - Host: `golduck.engin.umich.edu`
 - GPUs: 4× NVIDIA A100-SXM4-80GB (nvidia-smi index 0,1,2,4) + 1× "NVIDIA DGX Display" (index 3, 4 GB, **not usable for compute**).
@@ -52,7 +69,7 @@ alwaysApply: true
 - BEV tensors are `decoder_neck` features, shape `(256, 128, 128)`.
 - `area_pred=false` and `agent_pred=false` → `pred_ce_loss`, `pred_l1_loss`, `pred_area_loss` are always 0; this is expected.
 - LR uses sqrt scaling: `lr = base_lr * sqrt(global_batch / base_batch_size)` — no manual LR adjustment needed when changing batch.
-- Typical speed: 2GPU/16batch/8worker ≈ 5.8hr/epoch (with dataset cache); 85109 train samples, 18179 val samples.
+- Historical guppy speed: 2GPU/16batch/8worker ≈ 5.8hr/epoch (with dataset cache); 85109 train samples, 18179 val samples. Not the current Great Lakes split or worker recommendation.
 - BEV scorer structure config lives in `navsim/planning/script/config/common/agent/drivoR.yaml`:
   - `scorer_bev: {lora_rank=8, lora_dropout, add_new_cross_attn=true, init_gate=0.0}`
   - `bev_tokenizer: {patch_size=8, num_tokens=64, use_self_attn_block=false}`
@@ -95,18 +112,18 @@ alwaysApply: true
   - `agent.config.use_bev_feature=true` / `bev_feature_type` / `bev_channels` / `bev_features_root` / `bev_data_split`
 - Mismatch causes `KeyError` at DataLoader collation (e.g. `KeyError: 'trajectory_long'`).
 - Use `worker=sequential` for stability; Ray workers tend to crash during caching.
-- Cache loading is fast (~seconds for 85k samples) vs SceneLoader initialization (30+ hours).
+- Historical guppy observation: cache loading was fast (~seconds for 85k samples) vs SceneLoader initialization (30+ hours); do not treat this as current Great Lakes startup timing.
 
 ## Multi-GPU / DDP
 
 - Strategy: `ddp_find_unused_parameters_true` (frozen params require it).
 - `run_training_full.py` uses `LocalMetadataDDPStrategy` to avoid NCCL object broadcasts for identical local metadata.
 - W&B logger is instantiated **only on rank 0**; other ranks get `logger=False` and `LearningRateMonitor` is filtered out.
-- Ray scorer is disabled during multi-GPU training (`use_ray_score=false` when `num_gpus > 1`).
+- Ray scorer is disabled during multi-GPU training (`use_ray_score=false` when `num_gpus > 1`); the production CPU spawn pool is a separate backend and supports DDP.
 
 ## Memory & Stability
 
-- **CPU RAM is the kill-zone**: `BATCH_SIZE × NUM_GPUS × NUM_WORKERS × PREFETCH_FACTOR × ~16 MB/sample` must fit in ~125 GB.
+- **CPU RAM is the kill-zone**: `BATCH_SIZE × NUM_GPUS × NUM_WORKERS × PREFETCH_FACTOR × ~16 MB/sample` estimates prefetched BEV payload only, not total process/model/cache memory. The ~125-GB advice below is for historical guppy; use the actual Slurm RAM limit on Great Lakes.
 - Safe starting point: `BATCH_SIZE=8 NUM_WORKERS=2 PREFETCH_FACTOR=1`; scale up batch while reducing workers.
 - For larger effective batch without more RAM: use `trainer.params.accumulate_grad_batches`.
 - Process `Killed` (SIGKILL) with no Python traceback = system OOM; check `launcher.log` for exit code and timing.

@@ -2,6 +2,34 @@
 
 本文档汇总本仓库上 **train metric cache、BEV phase-1 训练、常见故障** 的上下文，供后续会话与人类查阅。路径以工作区 `wenzhet` 为根时的布局为准。
 
+## 当前 Great Lakes 上下文（2026-10-07 更新）
+
+- 当前仓库：`/nfs/turbo/coe-xiaonanh/wenzhet/DrivoR`。下文 `/mnt/ws-frb/...`、guppy / golduck 的路径、性能和内存建议属于历史环境，不应直接套用到 Great Lakes。
+- 验证 allocation `63199495`：account `xiaonanh0`，partition `spgpu`，node `gl1504`，4× A40、16 allocated CPUs、180 GiB job RAM。这是测试时的资源记录；再次使用前必须重新检查 Slurm 状态和 GPU 占用，不能假定 allocation 仍存活或空闲。
+- GPU 生产入口验证使用 `/home/wenzhet/.conda/envs/drivor-blackwell/bin/python`。9 项 CPU 回归测试在 `drivor` 和 `drivor-blackwell` 两个环境均通过；不能据此声称 `drivor` 环境也通过了 GPU 验证。
+
+### 已接入生产的 scorer / DataLoader 配置
+
+- `scripts/training/run_drivor_bev_phase1.sh` 和两份现有 4-GPU BEV Slurm wrapper 默认：`SCORING_WORKERS=3 SCORING_WORKER_THREADS=1 NUM_WORKERS=3 PREFETCH_FACTOR=1 USE_RAY_SCORE=false`，batch 16/GPU（4 卡 global batch 64）。wrapper 的 Slurm CPU / RAM / account 声明未修改。
+- Scorer 是每个 DDP rank 独立、lazy persistent、CPU-only 的 `spawn` pool，按 scene 并行并保持返回顺序；DataLoader workers 负责读取 / collate / prefetch，两者不是同一类 worker。4 卡共有 12 scorers，loader 每个活动 loader 集合也有 12 workers；train / val loader 集合可能共存，所有进程共享已申请的 16 CPUs，不会因增加 worker 而得到更多 CPU。
+- 核心实现：`navsim/agents/drivoR/score_module/scoring_pool.py`；agent 的训练及两个 validation scoring 调用都已接入。CPU 库线程限为 1，worker 不可见 CUDA，executor 不进入序列化；正常 teardown / 异常退出清理 pool。pool 创建资源不足或 broken pool 时告警并退回相同 serial scorer；普通 scene 错误继续抛出，不吞掉。
+- 通用 agent YAML 为兼容其他入口仍保留 `scoring_workers=0`，BEV launcher / wrapper 显式覆盖为 3。直接 Hydra 启动需设置 `agent.config.scoring_workers=3 agent.config.scoring_worker_threads=1 dataloader.params.num_workers=3 dataloader.params.prefetch_factor=1`。
+- `SCORING_WORKERS=0 USE_RAY_SCORE=false` 恢复原 serial scoring；`NUM_WORKERS=0` 自动将 prefetch 置为 null。PDM 数学、loss、冻结策略、LR schedule、checkpoint policy、数据选择和生产 W&B 设置均未改变。
+- 正常默认仍是 30 epochs，`LIMIT_TRAIN_BATCHES=1.0 LIMIT_VAL_BATCHES=1.0`，无 benchmark batch cap。复现测试数据选择需沿用 `exp/bev_feature_tokens/jun12_train010_val100_seed2_job61826557/combined_tokens.txt`，`USE_CACHE_WITHOUT_DATASET=false CACHE_PATH=null INCLUDE_VAL_LOGS_IN_TRAIN=false`；对应 8,511 train / 18,179 val。这里“全量训练”指完整配置 split，**不是**移除原 train-10% token filter。
+- 启动和配置说明见 [scoring-workers.md](scoring-workers.md)。新训练用独立 experiment / UID，不要覆盖已完成实验的 checkpoint 或 W&B run。
+
+### 实测性能、验证范围与限制
+
+- 2026-10-06，4× A40 / 16 CPUs，batch 16/GPU，同一 checkpoint 的 50 train + 12 val batches（各剔除 2 个 warmup）：serial scorer / loader 2 为 train **11.56 s/batch**、val **11.62 s/batch**；scorer 3 / loader 3 为 **4.77 / 4.49 s/batch**，约 **2.42× / 2.59×**，按上述 dataset 加权约 **2.53×**。不是完整 30-epoch wall-clock 测量或任意模型的保证。
+- Scorer 测到 8/GPU（32 total）成功，但 3–4/GPU 已到平台，6 / 8 更慢；DataLoader 测到 4/GPU，3 最快，2 在短筛选中接近且更省 RAM。这些是已测试数量，**不是绝对进程上限**；32-CPU allocation 和更高 worker 配置尚未测试。
+- 瓶颈主要是 CPU scoring，不是 GPU 显存；benchmark 单卡峰值约 3.97 GiB allocated / 5.91 GiB reserved。长确认 pool 总 host RAM 约 170.06 GiB（含 file cache），非可回收 cache 部分约 79.94 GiB；无 OOM。不要混淆显存、总 cgroup RAM 与可回收文件缓存，也不要降低 Slurm 180-GiB hard limit。
+- Benchmark 固定 64 scenes 的 scoring 数组以及记录的 train loss 序列精确匹配。生产实现另外通过 9 项 CPU 回归、4 个真实 cached scenes 的 train / val 精确且 finite parity。
+- 2026-10-07，实际 4-GPU production launcher 完成两个短 epoch（各 6 train / 3 val batches）、checkpoint 保存及新进程恢复至 zero-indexed epoch 2；四个 launcher 都 exit 0，optimizer / scheduler 恢复、权重 finite、无 pool fallback 或 OOM，测试 worker 退出后已清理。测试关闭 W&B 外部写入，不代表本次重新验证了 online W&B。
+- **恢复边界 caveat**：step-based `last.ckpt` 的初始 epoch 1 / step 12 在恢复时先额外执行一个 epoch-1 boundary batch，再执行 epoch 2 的 6 batches，最终 step **19** 而非 18。现有 checkpoint policy 未改；这证明功能性 resume，不能声称精确 DataLoader / batch-for-batch continuation。
+- 原实验已完成 30 epochs（最后 epoch 29）；本次未覆盖或恢复原实验，也**未启动新的完整 30-epoch 训练**。测试只证明多 epoch、验证、保存和功能性恢复，不证明完整训练收敛。
+- 生产入口初始 Hydra 大配置写盘可能安静数分钟，随后还有 SceneLoader 初始化；不要仅凭 GPU 空闲认定 scorer / DDP 卡死，也不要把历史 guppy 的 30+ 小时初始化当作 Great Lakes 实测。
+- 详细证据：`/nfs/turbo/coe-xiaonanh/wenzhet/gpu_benchmark_63199495/REPORT.md`、同目录 `PRODUCTION_INTEGRATION.md`、`run_20261006_b/results.json` / `summary.json`、`production_smoke.log` / `production_resume.log` / `production_parity_final.log` / `verify_production.py`。隔离输出：`exp/ke/workerpool-production-smoke-63199495/20261007-integration-v1`。
+
 ## 路径与数据
 
 | 用途 | 典型路径 |
@@ -195,7 +223,7 @@ unset PYTHON_BIN              # 若 shell 曾 export 到非预期 conda env
 bash scripts/training/run_drivor_bev_phase1.sh \
   ./weights/checkpoints/drivor_Nav1_25epochs.pth finetune_drivor_bev_full_trainval 20
 
-# 使用 cache 的全量训练（当前推荐配置）
+# 历史 guppy 2-GPU cache 示例（非当前 Great Lakes 推荐 worker 配置）
 CACHE_PATH="$PWD/exp/navsim_cache_nommcv_same_as_training" \
 USE_CACHE_WITHOUT_DATASET=true \
 BATCH_SIZE=16 NUM_WORKERS=8 PREFETCH_FACTOR=1 NUM_GPUS=2 \
